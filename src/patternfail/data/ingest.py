@@ -21,6 +21,9 @@ def ingest_asset_csv(asset: str, venue_type: str, csv_path: str, csv_cfg: dict) 
     ts_col = override.get("timestamp_col", csv_cfg["timestamp_col"])
     day_first = bool(override.get("day_first", csv_cfg.get("day_first", False)))
     assume_tz = override.get("assume_tz", csv_cfg.get("assume_tz", "UTC"))
+    sep = override.get("separator", csv_cfg.get("separator", ","))
+
+    df = pd.read_csv(csv_path, sep=sep)
 
     df = pd.read_csv(csv_path)
     rename = {

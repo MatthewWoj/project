@@ -40,6 +40,7 @@ csv:
   timestamp_col: timestamp
   day_first: false
   assume_tz: UTC
+  separator: ","
   cols:
     open: open
     high: high

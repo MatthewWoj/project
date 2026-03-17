@@ -6,30 +6,17 @@ split:
   test_start: '2025-01-01'
   test_end: '2025-12-31'
 
-assets: [AAPL, NVDA, SPY, QQQ, EURUSD, GBPUSD, XAUUSD, BTCUSDT]
+assets: [BTCUSDT, NVDA]
 
 venues:
-  AAPL: equity_us
-  NVDA: equity_us
-  SPY: equity_us
-  QQQ: equity_us
-  EURUSD: fx
-  GBPUSD: fx
-  XAUUSD: metal
   BTCUSDT: crypto
+  NVDA: equity_us
 
 input_csv:
-  AAPL: /ABSOLUTE/PATH/TO/AAPL_1m.csv
-  NVDA: /ABSOLUTE/PATH/TO/NVDA_1m.csv
-  SPY: /ABSOLUTE/PATH/TO/SPY_1m.csv
-  QQQ: /ABSOLUTE/PATH/TO/QQQ_1m.csv
-  EURUSD: /ABSOLUTE/PATH/TO/EURUSD_1m.csv
-  GBPUSD: /ABSOLUTE/PATH/TO/GBPUSD_1m.csv
-  XAUUSD: /ABSOLUTE/PATH/TO/XAUUSD_1m.csv
-  BTCUSDT: /ABSOLUTE/PATH/TO/BTCUSDT_1m.csv
+  BTCUSDT: /REPLACE/WITH/YOUR/PATH/BTCUSDT_1m_2022_2025.csv
+  NVDA: /REPLACE/WITH/YOUR/PATH/NVDA_1min_2022_2025.csv
 
 csv:
-  # Global defaults (used unless overridden per asset)
   timestamp_col: timestamp
   day_first: false
   assume_tz: UTC
@@ -41,22 +28,11 @@ csv:
     close: close
     volume: volume
 
-  # Optional per-asset schema overrides
   asset_overrides:
-    EURUSD:
-      timestamp_col: DateTime
-      assume_tz: Europe/London
-      cols:
-        open: Open
-        high: High
-        low: Low
-        close: Close
-        volume: TickVolume
     BTCUSDT:
       timestamp_col: open_time_utc
-      assume_tz: UTC
-  separator: ","
       separator: "\t"
+      assume_tz: UTC
       cols:
         open: open
         high: high
@@ -67,21 +43,13 @@ csv:
       timestamp_col: datetime_utc
       day_first: true
       assume_tz: UTC
-  separator: ","
+      separator: ","
       cols:
         open: open
         high: high
         low: low
         close: close
         volume: volume
-      timestamp_col: open_time
-      assume_tz: UTC
-      cols:
-        open: o
-        high: h
-        low: l
-        close: c
-        volume: v
 
 timeframes: [3min, 5min, 15min, 1h, 4h, 1d, 1w]
 
@@ -111,12 +79,12 @@ outcomes:
   default_target_r: 1.5
 
 surrogates:
-  n: 100
+  n: 20
   stationary_bootstrap_block: 30
 
 paths:
   output_root: data/outputs
-  run_name: real_csv_research
+  run_name: user_btc_nvda
   events_csv: data/events/events.csv
 
 experiments:

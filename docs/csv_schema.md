@@ -12,6 +12,8 @@ Each input CSV must provide these logical fields:
 
 Use `csv.cols` and `csv.timestamp_col` to map your raw column names to these logical fields.
 
+Use `csv.separator` (or `csv.asset_overrides.<ASSET>.separator`) for delimiter differences such as comma vs tab.
+
 ## Expected data rules
 
 - `timestamp` must parse via `pandas.to_datetime`.
@@ -41,6 +43,7 @@ csv:
   asset_overrides:
     EURUSD:
       timestamp_col: DateTime
+      separator: ","
       assume_tz: Europe/London
       cols: {open: Open, high: High, low: Low, close: Close, volume: TickVolume}
 ```

@@ -12,11 +12,13 @@ def test_ingest_asset_override_mapping_and_tz(tmp_path: Path):
     cfg = {
         "timestamp_col": "timestamp",
         "assume_tz": "UTC",
+        "separator": ",",
         "cols": {"open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"},
         "asset_overrides": {
             "EURUSD": {
                 "timestamp_col": "DateTime",
                 "assume_tz": "Europe/London",
+                "separator": ",",
                 "cols": {"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "TickVolume"},
             }
         },
@@ -25,6 +27,33 @@ def test_ingest_asset_override_mapping_and_tz(tmp_path: Path):
     df, _ = ingest_asset_csv("EURUSD", "fx", str(p), cfg)
     assert list(df.columns) == ["asset", "venue_type", "ts_utc", "open", "high", "low", "close", "volume"]
     assert str(df.loc[0, "ts_utc"].tz) == "UTC"
+
+
+def test_ingest_supports_tab_separator_and_day_first(tmp_path: Path):
+    p = tmp_path / "mix.tsv"
+    p.write_text(
+        "open_time_utc\topen\thigh\tlow\tclose\tvolume\n"
+        "03/01/2022 14:30\t1\t2\t0.5\t1.5\t10\n",
+        encoding="utf-8",
+    )
+    cfg = {
+        "timestamp_col": "timestamp",
+        "assume_tz": "UTC",
+        "separator": ",",
+        "cols": {"open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"},
+        "asset_overrides": {
+            "BTCUSDT": {
+                "timestamp_col": "open_time_utc",
+                "day_first": True,
+                "assume_tz": "UTC",
+                "separator": "\t",
+                "cols": {"open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"},
+            }
+        },
+    }
+
+    df, _ = ingest_asset_csv("BTCUSDT", "crypto", str(p), cfg)
+    assert df.loc[0, "ts_utc"].isoformat() == "2022-01-03T14:30:00+00:00"
 
 
 def test_reconstructed_timeframes_exist_for_crypto():
