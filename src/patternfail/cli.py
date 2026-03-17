@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import logging
 
 from patternfail.pipeline import run_pipeline
+
+
+def _call_run_pipeline(args: argparse.Namespace) -> None:
+    kwargs = {
+        "stage": args.stage,
+        "surrogates_n_override": args.surrogates_n,
+        "max_workers_override": args.max_workers,
+        "progress_every_override": args.progress_every,
+    }
+    sig = inspect.signature(run_pipeline)
+    supported = {k: v for k, v in kwargs.items() if k in sig.parameters}
+    run_pipeline(args.config, **supported)
 
 
 def main() -> None:
