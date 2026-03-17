@@ -164,7 +164,6 @@ def _run_data_layer(cfg: dict, dirs: dict[str, Path]) -> None:
 
 
 def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1, progress_every: int = 5) -> tuple[pd.DataFrame, pd.DataFrame]:
-def _run_detection_layer(cfg: dict, dirs: dict[str, Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
     split = cfg["split"]
     events = load_events(cfg["paths"]["events_csv"])
     all_patterns = []
