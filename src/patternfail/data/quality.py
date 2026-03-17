@@ -32,6 +32,17 @@ def missing_bar_report(df: pd.DataFrame, venue_type: str) -> pd.DataFrame:
             "longest_missing_active_gap": [longest_gap],
         }
     )
+    idx = pd.DatetimeIndex(df["ts_utc"]) 
+    active = active_minutes_mask(pd.date_range(idx.min(), idx.max(), freq="min", tz="UTC"), venue_type)
+    expected_idx = active.index[active.values]
+    observed = pd.Index(idx)
+    missing = expected_idx.difference(observed)
+    return pd.DataFrame({
+        "expected_active_bars": [len(expected_idx)],
+        "observed_bars": [len(observed)],
+        "missing_active_bars": [len(missing)],
+        "gap_segments": [int((missing.to_series().diff().dt.total_seconds().fillna(60) != 60).sum()) if len(missing) else 0],
+    })
 
 
 def stale_quote_flags(df: pd.DataFrame, close_run: int = 10, zero_range_run: int = 10) -> pd.DataFrame:

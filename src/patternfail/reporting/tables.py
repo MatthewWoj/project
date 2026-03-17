@@ -17,4 +17,10 @@ def _flatten(prefix: str, value, rows: list[dict]) -> None:
 def parameter_table(cfg: dict) -> pd.DataFrame:
     rows: list[dict] = []
     _flatten("", cfg, rows)
+def parameter_table(cfg: dict) -> pd.DataFrame:
+    rows = []
+    for k, v in cfg.items():
+        if isinstance(v, (dict, list)):
+            continue
+        rows.append({"parameter": k, "value": v})
     return pd.DataFrame(rows)

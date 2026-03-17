@@ -98,6 +98,7 @@ def run_pipeline(config_path: str) -> dict[str, Path]:
     rng = np.random.default_rng(cfg["seed"])
 
     split = cfg["split"]
+
     for asset in cfg["assets"]:
         venue = cfg["venues"][asset]
         df1m, rep = ingest_asset_csv(asset, venue, cfg["input_csv"][asset], cfg["csv"])
@@ -129,6 +130,26 @@ def run_pipeline(config_path: str) -> dict[str, Path]:
             write_table(pivots, dirs["turning_points"] / f"{asset}_{tf}_pivots.parquet")
 
             p = _detect_patterns(test, cfg, pivots)
+            split = cfg["split"]
+            train = bars[(bars["ts_utc"] >= split["train_start"]) & (bars["ts_utc"] <= split["train_end"])].copy()
+            qlo, qhi = fit_regime_quantiles(train, tuple(cfg["features"]["regime_q"])) if not train.empty else (bars["rv"].quantile(.33), bars["rv"].quantile(.66))
+            bars = apply_regimes(bars, qlo, qhi)
+
+            write_table(bars, dirs["bars"] / f"{asset}_{tf}.parquet")
+            pivots = extract_pivots(bars, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
+            write_table(pivots, dirs["turning_points"] / f"{asset}_{tf}_pivots.parquet")
+
+            dcfg = cfg["detectors"]
+            patterns = [
+                detect_hs_lo(bars, pivots, dcfg["hs"]["shoulder_tol"], dcfg["hs"]["trough_tol"], dcfg["hs"]["confirm_beta_atr"]),
+                detect_double_patterns(bars, pivots, dcfg["double"]["peak_tol"], dcfg["double"]["min_depth_atr"], dcfg["double"]["confirm_beta_atr"]),
+                detect_triangles(bars, pivots, dcfg["triangle"]["window_pivots"], dcfg["triangle"]["convergence_ratio"], dcfg["triangle"]["residual_eta_atr"], dcfg["triangle"]["confirm_beta_atr"]),
+                detect_symbolic_channels(bars, dcfg["symbolic"]["sax_window"], dcfg["symbolic"]["paa_segments"], dcfg["symbolic"]["alphabet_size"], dcfg["symbolic"]["residual_weight"], dcfg["symbolic"]["smoothness_weight"], dcfg["symbolic"]["channel_threshold"]),
+            ]
+            if dcfg["hs_ieee"]["enabled"]:
+                patterns.append(detect_hs_ieee_comparator(bars, dcfg["hs_ieee"]["keypoint_window"], dcfg["hs_ieee"]["min_prominence_atr"]))
+
+            p = pd.concat([x for x in patterns if not x.empty], ignore_index=True) if any(not x.empty for x in patterns) else pd.DataFrame()
             if p.empty:
                 continue
 
@@ -172,6 +193,11 @@ def run_pipeline(config_path: str) -> dict[str, Path]:
                             }
                         )
 
+            p = label_pattern_vol_context(p, bars)
+            p = label_outcomes(p, bars, cfg["outcomes"]["timeout_bars"], cfg["outcomes"]["atr_stop_margin"], cfg["outcomes"]["default_target_r"])
+            write_table(_serialize_json_cols(p), dirs["patterns"] / f"{asset}_{tf}_patterns.parquet")
+            all_patterns.append(p)
+
     quality_df = pd.concat(quality_rows, ignore_index=True) if quality_rows else pd.DataFrame()
     write_table(quality_df, dirs["experiments"] / "data_quality.parquet")
 
@@ -190,6 +216,8 @@ def run_pipeline(config_path: str) -> dict[str, Path]:
         allp = pd.concat(nested_parts, ignore_index=True) if nested_parts else allp
 
         write_table(_serialize_json_cols(allp), dirs["outcomes"] / "all_patterns_with_outcomes.parquet")
+        write_table(_serialize_json_cols(allp), dirs["outcomes"] / "all_patterns_with_outcomes.parquet")
+
         fail_sess = failure_rate_by_context(allp, "session_bucket")
         fail_reg = failure_rate_by_context(allp, "vol_regime")
         write_table(fail_sess, dirs["experiments"] / "failure_by_session.parquet")
@@ -206,6 +234,17 @@ def run_pipeline(config_path: str) -> dict[str, Path]:
             for null_name, g in surr.groupby("null_model"):
                 ex = existence_table(allp, g)
                 write_table(ex, dirs["significance"] / f"existence_significance_{null_name}.parquet")
+
+        # surrogate summary (existence placeholders on observed price using null generators)
+        srows = []
+        rng = np.random.default_rng(cfg["seed"])
+        for _, g in allp.groupby(["asset", "timeframe", "pattern_type"]):
+            for _ in range(cfg["surrogates"]["n"]):
+                srows.append({"asset": g["asset"].iloc[0], "timeframe": g["timeframe"].iloc[0], "pattern_type": g["pattern_type"].iloc[0], "count_density": len(g), "strength": float(g["score"].median())})
+        surr = pd.DataFrame(srows)
+        ex = existence_table(allp, surr)
+        write_table(ex, dirs["significance"] / "existence_significance.parquet")
+        write_table(method_comparison(allp), dirs["experiments"] / "method_comparison.parquet")
 
     logger.info("pipeline completed: %s", dirs["root"])
     return dirs
