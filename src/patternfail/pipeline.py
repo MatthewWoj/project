@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -93,10 +94,52 @@ def _surrogate_bars_from_test(test_bars: pd.DataFrame, surrogate_close: pd.Serie
     return s
 
 
+def _surrogate_rows_for_task(
+    test: pd.DataFrame,
+    cfg: dict,
+    qlo: float,
+    qhi: float,
+    null_name: str,
+    sim_id: int,
+    seed: int,
+) -> list[dict]:
+    rng = np.random.default_rng(seed)
+    s_close = (
+        returns_permutation(test["close"], rng)
+        if null_name == "perm"
+        else stationary_bootstrap(test["close"], cfg["surrogates"]["stationary_bootstrap_block"], rng)
+    )
+    s_bars = _surrogate_bars_from_test(test, s_close)
+    s_bars = add_log_returns(s_bars)
+    s_bars = add_true_range_and_atr(s_bars, cfg["features"]["atr_period"])
+    s_bars = add_realized_vol(s_bars, cfg["features"]["rv_window"])
+    s_bars = apply_regimes(s_bars, qlo, qhi)
+    s_pivots = extract_pivots(s_bars, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
+    s_patterns = _detect_patterns(s_bars, cfg, s_pivots)
+    if s_patterns.empty:
+        return []
+
+    out = []
+    for k, g in s_patterns.groupby(["asset", "timeframe", "pattern_type"]):
+        out.append(
+            {
+                "asset": k[0],
+                "timeframe": k[1],
+                "pattern_type": k[2],
+                "null_model": null_name,
+                "sim_id": sim_id,
+                "count_density": len(g),
+                "strength": float(g["score"].median()),
+            }
+        )
+    return out
+
+
 def _run_data_layer(cfg: dict, dirs: dict[str, Path]) -> None:
     quality_rows = []
     for asset in cfg["assets"]:
         venue = cfg["venues"][asset]
+        logger.info("[data] ingesting asset=%s venue=%s", asset, venue)
         df1m, rep = ingest_asset_csv(asset, venue, cfg["input_csv"][asset], cfg["csv"])
         df1m = stale_quote_flags(df1m, cfg["quality"]["stale_close_run"], cfg["quality"]["stale_zero_range_run"])
         q = missing_bar_report(df1m, venue)
@@ -120,12 +163,15 @@ def _run_data_layer(cfg: dict, dirs: dict[str, Path]) -> None:
     write_table(quality_df, dirs["experiments"] / "data_quality.parquet")
 
 
+def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1, progress_every: int = 5) -> tuple[pd.DataFrame, pd.DataFrame]:
 def _run_detection_layer(cfg: dict, dirs: dict[str, Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
     split = cfg["split"]
     events = load_events(cfg["paths"]["events_csv"])
     all_patterns = []
     macro_rows = []
     surrogate_rows: list[dict] = []
+
+    n_surrogates = int(cfg["surrogates"]["n"])
     rng = np.random.default_rng(cfg["seed"])
 
     for asset in cfg["assets"]:
@@ -138,13 +184,17 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path]) -> tuple[pd.DataFrame
             train = bars[(bars["ts_utc"] >= split["train_start"]) & (bars["ts_utc"] <= split["train_end"])].copy()
             test = bars[(bars["ts_utc"] >= split["test_start"]) & (bars["ts_utc"] <= split["test_end"])].copy().reset_index(drop=True)
             if test.empty:
+                logger.info("[detect] skip asset=%s tf=%s (no test bars in split)", asset, tf)
                 continue
 
             qlo, qhi = fit_regime_quantiles(train, tuple(cfg["features"]["regime_q"])) if not train.empty else (bars["rv"].quantile(0.33), bars["rv"].quantile(0.66))
             test = apply_regimes(test, qlo, qhi)
             p = _detect_patterns(test, cfg, pivots)
             if p.empty:
+                logger.info("[detect] asset=%s tf=%s patterns=0", asset, tf)
                 continue
+
+            logger.info("[detect] asset=%s tf=%s patterns=%s starting surrogates n=%s workers=%s", asset, tf, len(p), n_surrogates, max_workers)
 
             for i, row in p.iterrows():
                 ctx = dict(row["context_labels"] or {})
@@ -160,6 +210,24 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path]) -> tuple[pd.DataFrame
             write_table(_serialize_json_cols(p), dirs["outcomes"] / f"{asset}_{tf}_outcomes.parquet")
             all_patterns.append(p)
 
+            jobs = [(sidx, null_name) for sidx in range(n_surrogates) for null_name in ("perm", "stationary")]
+
+            if max_workers > 1:
+                with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                    futures = []
+                    for sidx, null_name in jobs:
+                        seed = int(cfg["seed"]) + sidx * 1000 + (0 if null_name == "perm" else 1)
+                        futures.append(ex.submit(_surrogate_rows_for_task, test, cfg, qlo, qhi, null_name, sidx, seed))
+                    for i, fut in enumerate(futures, start=1):
+                        surrogate_rows.extend(fut.result())
+                        if i % max(progress_every, 1) == 0 or i == len(futures):
+                            logger.info("[detect] surrogate progress asset=%s tf=%s %s/%s", asset, tf, i, len(futures))
+            else:
+                for i, (sidx, null_name) in enumerate(jobs, start=1):
+                    seed = int(cfg["seed"]) + sidx * 1000 + (0 if null_name == "perm" else 1)
+                    surrogate_rows.extend(_surrogate_rows_for_task(test, cfg, qlo, qhi, null_name, sidx, seed))
+                    if i % max(progress_every, 1) == 0 or i == len(jobs):
+                        logger.info("[detect] surrogate progress asset=%s tf=%s %s/%s", asset, tf, i, len(jobs))
             for sidx in range(cfg["surrogates"]["n"]):
                 for null_name in ("perm", "stationary"):
                     s_close = (
@@ -249,6 +317,28 @@ def _run_experiments_layer(cfg: dict, dirs: dict[str, Path], all_patterns: pd.Da
             write_table(existence_table(allp, g), dirs["significance"] / f"existence_significance_{null_name}.parquet")
 
 
+def run_pipeline(
+    config_path: str,
+    stage: str = "full",
+    surrogates_n_override: int | None = None,
+    max_workers_override: int | None = None,
+    progress_every_override: int | None = None,
+) -> dict[str, Path]:
+    cfg = AppConfig.from_yaml(config_path).raw
+    if surrogates_n_override is not None:
+        cfg.setdefault("surrogates", {})["n"] = int(surrogates_n_override)
+    max_workers = int(max_workers_override if max_workers_override is not None else cfg.get("runtime", {}).get("max_workers", 1))
+    progress_every = int(progress_every_override if progress_every_override is not None else cfg.get("runtime", {}).get("progress_every", 5))
+
+    np.random.seed(cfg["seed"])
+    dirs = ensure_run_dirs(cfg["paths"]["output_root"], cfg["paths"]["run_name"])
+    Path(dirs["meta"] / "config_used.yaml").write_text(Path(config_path).read_text(encoding="utf-8"), encoding="utf-8")
+    write_table(parameter_table(cfg), dirs["meta"] / "locked_parameters.parquet")
+
+    if stage in ("full", "data"):
+        _run_data_layer(cfg, dirs)
+    if stage in ("full", "detect"):
+        patterns, surr = _run_detection_layer(cfg, dirs, max_workers=max_workers, progress_every=progress_every)
 def run_pipeline(config_path: str, stage: str = "full") -> dict[str, Path]:
     cfg = AppConfig.from_yaml(config_path).raw
     np.random.seed(cfg["seed"])

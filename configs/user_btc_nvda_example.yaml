@@ -87,5 +87,9 @@ paths:
   run_name: user_btc_nvda
   events_csv: data/events/events.csv
 
+runtime:
+  max_workers: 1
+  progress_every: 5
+
 experiments:
   base_timeframe: 15min

@@ -59,6 +59,119 @@ patternfail --config configs/multi_asset_example.yaml --stage detect
 patternfail --config configs/multi_asset_example.yaml --stage experiments
 ```
 
+- Faster debug detect run with fewer surrogates + progress logs + parallel workers:
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage detect --surrogates-n 5 --max-workers 4 --progress-every 2
+```
+
+### Example: single asset
+
+Create a config with:
+
+```yaml
+assets: [AAPL]
+input_csv:
+  AAPL: /ABSOLUTE/PATH/TO/AAPL_1m.csv
+```
+
+Then run:
+
+```bash
+patternfail --config configs/aapl_only.yaml --stage full
+```
+
+### Example: multi asset
+
+Use `configs/multi_asset_example.yaml` with assets:
+
+- AAPL, NVDA, SPY, QQQ
+- EURUSD, GBPUSD, XAUUSD, BTCUSDT
+
+## New-user walkthrough for your BTC + NVDA files
+
+If you are starting from scratch, use `docs/first_run_testing_guide.md`.
+
+It includes exact steps for:
+
+- `BTCUSDT_1m_2022_2025.csv`
+- `NVDA_1min_2022_2025.csv`
+
+and uses `configs/user_btc_nvda_example.yaml` as the starter config.
+
+## CSV Schema and timezone behavior
+
+See `docs/csv_schema.md`.
+
+Highlights:
+
+- Flexible column mapping via `csv.cols` and per-asset `csv.asset_overrides`.
+- Naive timestamps are localized using `assume_tz` then converted to UTC.
+- Internal canonical timestamp is always `ts_utc` (timezone-aware UTC).
+
+## Output locations
+
+All artifacts are written under:
+
+```text
+data/outputs/<run_name>/
+```
+
+See:
+
+- `docs/output_catalog.md`
+- `docs/data_dictionary.md`
+
+## Visual validation (manual pattern review)
+
+Use the review utility to browse by asset/timeframe/pattern type/pattern id and render candle windows with overlays.
+
+```bash
+python scripts/review_detection.py \
+  --run-root data/outputs/real_csv_research \
+  --asset AAPL \
+  --timeframe 15min \
+  --pattern-type HS_TOP \
+  --window-bars 100 \
+  --show-outcome \
+  --save data/outputs/real_csv_research/figures/review_AAPL_15min.png
+```
+
+## Methodology mapping
+
+See `docs/methodology_map.md` for explicit labels:
+
+- literature-grounded
+- practical implementation choice
+- pilot
+- future work
+
+## Tests
+
+```bash
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage full
+```
+
+- Data layer only (ingest + reconstructed bars + pivots):
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage data
+```
+
+- Detection only (reads saved bars/pivots and writes patterns/outcomes/significance stats):
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage detect
+```
+
+- Experiments/reporting only (reads saved pattern outputs):
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage experiments
+```
+
 ### Example: single asset
 
 Create a config with:
@@ -361,3 +474,10 @@ See `docs/methodology_map.md` for explicit labels:
 ```bash
 pytest -q
 ```
+
+
+### Performance tuning
+
+- `--surrogates-n` overrides `surrogates.n` at runtime (great for quick checks).
+- `--max-workers` parallelizes surrogate jobs with a thread pool.
+- `--progress-every` controls progress log frequency during detect stage.

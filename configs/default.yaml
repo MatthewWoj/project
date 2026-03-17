@@ -104,5 +104,9 @@ paths:
   run_name: default_run
   events_csv: data/events/events.csv
 
+runtime:
+  max_workers: 1
+  progress_every: 5
+
 experiments:
   base_timeframe: 15min

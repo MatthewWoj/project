@@ -70,6 +70,14 @@ Check outputs:
 - `data/outputs/<run_name>/outcomes/*_outcomes.parquet`
 - `data/outputs/<run_name>/significance/surrogate_stats.parquet`
 
+### Optional: quick progress-friendly detect run
+
+For initial sanity checks, you can run fewer surrogates and see frequent progress logs:
+
+```bash
+patternfail --config configs/my_run.yaml --stage detect --surrogates-n 5 --max-workers 4 --progress-every 2
+```
+
 ## 6) Run experiments/reporting
 
 ```bash

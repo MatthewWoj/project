@@ -16,6 +16,17 @@ def main() -> None:
         default="full",
         help="Pipeline stage: full end-to-end, data only, detection only, or experiments/reporting only.",
     )
+    ap.add_argument("--surrogates-n", type=int, help="Override surrogates.n for quick or heavy runs.")
+    ap.add_argument("--max-workers", type=int, help="Max thread workers for surrogate detection loop.")
+    ap.add_argument("--progress-every", type=int, help="Log surrogate progress every N jobs.")
+    args = ap.parse_args()
+    run_pipeline(
+        args.config,
+        stage=args.stage,
+        surrogates_n_override=args.surrogates_n,
+        max_workers_override=args.max_workers,
+        progress_every_override=args.progress_every,
+    )
     args = ap.parse_args()
     run_pipeline(args.config, stage=args.stage)
 

@@ -119,5 +119,9 @@ paths:
   run_name: real_csv_research
   events_csv: data/events/events.csv
 
+runtime:
+  max_workers: 1
+  progress_every: 5
+
 experiments:
   base_timeframe: 15min
