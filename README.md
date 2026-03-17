@@ -88,6 +88,52 @@ If you are starting from scratch, use `docs/first_run_testing_guide.md`.
 
 It includes exact steps for:
 
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage data
+```
+
+- Detection only (reads saved bars/pivots and writes patterns/outcomes/significance stats):
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage detect
+```
+
+- Experiments/reporting only (reads saved pattern outputs):
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage experiments
+```
+
+### Example: single asset
+
+Create a config with:
+
+```yaml
+assets: [AAPL]
+input_csv:
+  AAPL: /ABSOLUTE/PATH/TO/AAPL_1m.csv
+```
+
+Then run:
+
+```bash
+patternfail --config configs/aapl_only.yaml --stage full
+```
+
+### Example: multi asset
+
+Use `configs/multi_asset_example.yaml` with assets:
+
+- AAPL, NVDA, SPY, QQQ
+- EURUSD, GBPUSD, XAUUSD, BTCUSDT
+
+## New-user walkthrough for your BTC + NVDA files
+
+If you are starting from scratch, use `docs/first_run_testing_guide.md`.
+
+It includes exact steps for:
+
 - `BTCUSDT_1m_2022_2025.csv`
 - `NVDA_1min_2022_2025.csv`
 
