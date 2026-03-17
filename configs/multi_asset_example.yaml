@@ -1,0 +1,101 @@
+seed: 42
+
+split:
+  train_start: '2022-01-01'
+  train_end: '2024-12-31'
+  test_start: '2025-01-01'
+  test_end: '2025-12-31'
+
+assets: [AAPL, NVDA, SPY, QQQ, EURUSD, GBPUSD, XAUUSD, BTCUSDT]
+
+venues:
+  AAPL: equity_us
+  NVDA: equity_us
+  SPY: equity_us
+  QQQ: equity_us
+  EURUSD: fx
+  GBPUSD: fx
+  XAUUSD: metal
+  BTCUSDT: crypto
+
+input_csv:
+  AAPL: /ABSOLUTE/PATH/TO/AAPL_1m.csv
+  NVDA: /ABSOLUTE/PATH/TO/NVDA_1m.csv
+  SPY: /ABSOLUTE/PATH/TO/SPY_1m.csv
+  QQQ: /ABSOLUTE/PATH/TO/QQQ_1m.csv
+  EURUSD: /ABSOLUTE/PATH/TO/EURUSD_1m.csv
+  GBPUSD: /ABSOLUTE/PATH/TO/GBPUSD_1m.csv
+  XAUUSD: /ABSOLUTE/PATH/TO/XAUUSD_1m.csv
+  BTCUSDT: /ABSOLUTE/PATH/TO/BTCUSDT_1m.csv
+
+csv:
+  # Global defaults (used unless overridden per asset)
+  timestamp_col: timestamp
+  day_first: false
+  assume_tz: UTC
+  cols:
+    open: open
+    high: high
+    low: low
+    close: close
+    volume: volume
+
+  # Optional per-asset schema overrides
+  asset_overrides:
+    EURUSD:
+      timestamp_col: DateTime
+      assume_tz: Europe/London
+      cols:
+        open: Open
+        high: High
+        low: Low
+        close: Close
+        volume: TickVolume
+    BTCUSDT:
+      timestamp_col: open_time
+      assume_tz: UTC
+      cols:
+        open: o
+        high: h
+        low: l
+        close: c
+        volume: v
+
+timeframes: [3min, 5min, 15min, 1h, 4h, 1d, 1w]
+
+features:
+  atr_period: 14
+  rv_window: 60
+  regime_q: [0.33, 0.66]
+
+turning_points:
+  atr_lambda: 2.0
+  min_separation_bars: 3
+
+detectors:
+  hs: { shoulder_tol: 0.08, trough_tol: 0.10, confirm_beta_atr: 0.2 }
+  hs_ieee: { enabled: true, keypoint_window: 180, min_prominence_atr: 0.7 }
+  double: { peak_tol: 0.04, min_depth_atr: 1.0, confirm_beta_atr: 0.2 }
+  triangle: { window_pivots: 8, convergence_ratio: 0.7, residual_eta_atr: 0.75, confirm_beta_atr: 0.2 }
+  symbolic: { sax_window: 80, paa_segments: 12, alphabet_size: 7, smoothness_weight: 0.3, residual_weight: 0.7, channel_threshold: 0.75 }
+
+quality:
+  stale_close_run: 10
+  stale_zero_range_run: 10
+
+outcomes:
+  timeout_bars: 60
+  atr_stop_margin: 0.5
+  default_target_r: 1.5
+
+surrogates:
+  n: 100
+  stationary_bootstrap_block: 30
+
+paths:
+  output_root: data/outputs
+  run_name: real_csv_research
+  events_csv: data/events/events.csv
+
+experiments:
+  base_timeframe: 15min
