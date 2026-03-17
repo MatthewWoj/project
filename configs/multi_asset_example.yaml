@@ -74,6 +74,14 @@ csv:
         low: low
         close: close
         volume: volume
+      timestamp_col: open_time
+      assume_tz: UTC
+      cols:
+        open: o
+        high: h
+        low: l
+        close: c
+        volume: v
 
 timeframes: [3min, 5min, 15min, 1h, 4h, 1d, 1w]
 
