@@ -27,6 +27,8 @@ def main() -> None:
         max_workers_override=args.max_workers,
         progress_every_override=args.progress_every,
     )
+    args = ap.parse_args()
+    run_pipeline(args.config, stage=args.stage)
 
 
 if __name__ == "__main__":
