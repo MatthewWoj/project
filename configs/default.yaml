@@ -101,3 +101,6 @@ paths:
   output_root: data/outputs
   run_name: default_run
   events_csv: data/events/events.csv
+
+experiments:
+  base_timeframe: 15min
