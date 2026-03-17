@@ -1,0 +1,31 @@
+from __future__ import annotations
+
+import pandas as pd
+
+from .market_hours import active_minutes_mask
+
+
+def missing_bar_report(df: pd.DataFrame, venue_type: str) -> pd.DataFrame:
+    idx = pd.DatetimeIndex(df["ts_utc"]) 
+    active = active_minutes_mask(pd.date_range(idx.min(), idx.max(), freq="min", tz="UTC"), venue_type)
+    expected_idx = active.index[active.values]
+    observed = pd.Index(idx)
+    missing = expected_idx.difference(observed)
+    return pd.DataFrame({
+        "expected_active_bars": [len(expected_idx)],
+        "observed_bars": [len(observed)],
+        "missing_active_bars": [len(missing)],
+        "gap_segments": [int((missing.to_series().diff().dt.total_seconds().fillna(60) != 60).sum()) if len(missing) else 0],
+    })
+
+
+def stale_quote_flags(df: pd.DataFrame, close_run: int = 10, zero_range_run: int = 10) -> pd.DataFrame:
+    out = df.copy()
+    same_close = out["close"].eq(out["close"].shift(1))
+    zrange = out["high"].eq(out["low"])
+
+    g1 = (same_close != same_close.shift(1)).cumsum()
+    g2 = (zrange != zrange.shift(1)).cumsum()
+    out["stale_close_flag"] = same_close & (same_close.groupby(g1).transform("size") >= close_run)
+    out["stale_zero_range_flag"] = zrange & (zrange.groupby(g2).transform("size") >= zero_range_run)
+    return out
