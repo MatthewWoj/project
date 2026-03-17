@@ -46,6 +46,15 @@ def _serialize_json_cols(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _read_table(path: Path) -> pd.DataFrame:
+    if path.suffix == ".parquet" and path.exists():
+        return pd.read_parquet(path)
+    alt = path.with_suffix(".csv")
+    if alt.exists():
+        return pd.read_csv(alt)
+    raise FileNotFoundError(path)
+
+
 def _detect_patterns(bars: pd.DataFrame, cfg: dict, pivots: pd.DataFrame) -> pd.DataFrame:
     dcfg = cfg["detectors"]
     patterns = [
@@ -84,21 +93,8 @@ def _surrogate_bars_from_test(test_bars: pd.DataFrame, surrogate_close: pd.Serie
     return s
 
 
-def run_pipeline(config_path: str) -> dict[str, Path]:
-    cfg = AppConfig.from_yaml(config_path).raw
-    np.random.seed(cfg["seed"])
-    dirs = ensure_run_dirs(cfg["paths"]["output_root"], cfg["paths"]["run_name"])
-    Path(dirs["meta"] / "config_used.yaml").write_text(Path(config_path).read_text(encoding="utf-8"), encoding="utf-8")
-    write_table(parameter_table(cfg), dirs["meta"] / "locked_parameters.parquet")
-
-    events = load_events(cfg["paths"]["events_csv"])
-    all_patterns = []
+def _run_data_layer(cfg: dict, dirs: dict[str, Path]) -> None:
     quality_rows = []
-    surrogate_rows: list[dict] = []
-    rng = np.random.default_rng(cfg["seed"])
-
-    split = cfg["split"]
-
     for asset in cfg["assets"]:
         venue = cfg["venues"][asset]
         df1m, rep = ingest_asset_csv(asset, venue, cfg["input_csv"][asset], cfg["csv"])
@@ -115,6 +111,29 @@ def run_pipeline(config_path: str) -> dict[str, Path]:
             bars = add_log_returns(bars)
             bars = add_true_range_and_atr(bars, cfg["features"]["atr_period"])
             bars = add_realized_vol(bars, cfg["features"]["rv_window"])
+            write_table(bars, dirs["bars"] / f"{asset}_{tf}.parquet")
+
+            pivots = extract_pivots(bars, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
+            write_table(pivots, dirs["turning_points"] / f"{asset}_{tf}_pivots.parquet")
+
+    quality_df = pd.concat(quality_rows, ignore_index=True) if quality_rows else pd.DataFrame()
+    write_table(quality_df, dirs["experiments"] / "data_quality.parquet")
+
+
+def _run_detection_layer(cfg: dict, dirs: dict[str, Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    split = cfg["split"]
+    events = load_events(cfg["paths"]["events_csv"])
+    all_patterns = []
+    macro_rows = []
+    surrogate_rows: list[dict] = []
+    rng = np.random.default_rng(cfg["seed"])
+
+    for asset in cfg["assets"]:
+        venue = cfg["venues"][asset]
+        for tf in cfg["timeframes"]:
+            bars = _read_table(dirs["bars"] / f"{asset}_{tf}.parquet")
+            bars["ts_utc"] = pd.to_datetime(bars["ts_utc"], utc=True)
+            pivots = _read_table(dirs["turning_points"] / f"{asset}_{tf}_pivots.parquet")
 
             train = bars[(bars["ts_utc"] >= split["train_start"]) & (bars["ts_utc"] <= split["train_end"])].copy()
             test = bars[(bars["ts_utc"] >= split["test_start"]) & (bars["ts_utc"] <= split["test_end"])].copy().reset_index(drop=True)
@@ -122,48 +141,25 @@ def run_pipeline(config_path: str) -> dict[str, Path]:
                 continue
 
             qlo, qhi = fit_regime_quantiles(train, tuple(cfg["features"]["regime_q"])) if not train.empty else (bars["rv"].quantile(0.33), bars["rv"].quantile(0.66))
-            bars = apply_regimes(bars, qlo, qhi)
             test = apply_regimes(test, qlo, qhi)
-
-            write_table(bars, dirs["bars"] / f"{asset}_{tf}.parquet")
-            pivots = extract_pivots(test, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
-            write_table(pivots, dirs["turning_points"] / f"{asset}_{tf}_pivots.parquet")
-
             p = _detect_patterns(test, cfg, pivots)
-            split = cfg["split"]
-            train = bars[(bars["ts_utc"] >= split["train_start"]) & (bars["ts_utc"] <= split["train_end"])].copy()
-            qlo, qhi = fit_regime_quantiles(train, tuple(cfg["features"]["regime_q"])) if not train.empty else (bars["rv"].quantile(.33), bars["rv"].quantile(.66))
-            bars = apply_regimes(bars, qlo, qhi)
-
-            write_table(bars, dirs["bars"] / f"{asset}_{tf}.parquet")
-            pivots = extract_pivots(bars, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
-            write_table(pivots, dirs["turning_points"] / f"{asset}_{tf}_pivots.parquet")
-
-            dcfg = cfg["detectors"]
-            patterns = [
-                detect_hs_lo(bars, pivots, dcfg["hs"]["shoulder_tol"], dcfg["hs"]["trough_tol"], dcfg["hs"]["confirm_beta_atr"]),
-                detect_double_patterns(bars, pivots, dcfg["double"]["peak_tol"], dcfg["double"]["min_depth_atr"], dcfg["double"]["confirm_beta_atr"]),
-                detect_triangles(bars, pivots, dcfg["triangle"]["window_pivots"], dcfg["triangle"]["convergence_ratio"], dcfg["triangle"]["residual_eta_atr"], dcfg["triangle"]["confirm_beta_atr"]),
-                detect_symbolic_channels(bars, dcfg["symbolic"]["sax_window"], dcfg["symbolic"]["paa_segments"], dcfg["symbolic"]["alphabet_size"], dcfg["symbolic"]["residual_weight"], dcfg["symbolic"]["smoothness_weight"], dcfg["symbolic"]["channel_threshold"]),
-            ]
-            if dcfg["hs_ieee"]["enabled"]:
-                patterns.append(detect_hs_ieee_comparator(bars, dcfg["hs_ieee"]["keypoint_window"], dcfg["hs_ieee"]["min_prominence_atr"]))
-
-            p = pd.concat([x for x in patterns if not x.empty], ignore_index=True) if any(not x.empty for x in patterns) else pd.DataFrame()
             if p.empty:
                 continue
 
-            for i, r in p.iterrows():
-                ctx = dict(r["context_labels"] or {})
-                ctx["session_bucket"] = session_bucket(pd.Timestamp(r["t_confirm_utc"]), venue)
-                ctx["event_window"] = label_event_window(pd.Timestamp(r["t_confirm_utc"]), events)
+            for i, row in p.iterrows():
+                ctx = dict(row["context_labels"] or {})
+                event_label = label_event_window(pd.Timestamp(row["t_confirm_utc"]), events)
+                ctx["session_bucket"] = session_bucket(pd.Timestamp(row["t_confirm_utc"]), venue)
+                ctx["event_window"] = event_label
                 p.at[i, "context_labels"] = ctx
+                macro_rows.append({"pattern_id": row["pattern_id"], "asset": row["asset"], "timeframe": row["timeframe"], "event_window": event_label})
+
             p = label_pattern_vol_context(p, test)
             p = label_outcomes(p, test, cfg["outcomes"]["timeout_bars"], cfg["outcomes"]["atr_stop_margin"], cfg["outcomes"]["default_target_r"])
             write_table(_serialize_json_cols(p), dirs["patterns"] / f"{asset}_{tf}_patterns.parquet")
+            write_table(_serialize_json_cols(p), dirs["outcomes"] / f"{asset}_{tf}_outcomes.parquet")
             all_patterns.append(p)
 
-            # Surrogate statistics per null model on test data
             for sidx in range(cfg["surrogates"]["n"]):
                 for null_name in ("perm", "stationary"):
                     s_close = (
@@ -193,58 +189,81 @@ def run_pipeline(config_path: str) -> dict[str, Path]:
                             }
                         )
 
-            p = label_pattern_vol_context(p, bars)
-            p = label_outcomes(p, bars, cfg["outcomes"]["timeout_bars"], cfg["outcomes"]["atr_stop_margin"], cfg["outcomes"]["default_target_r"])
-            write_table(_serialize_json_cols(p), dirs["patterns"] / f"{asset}_{tf}_patterns.parquet")
-            all_patterns.append(p)
+    macro_df = pd.DataFrame(macro_rows)
+    write_table(macro_df, dirs["experiments"] / "macro_event_labels.parquet")
+    surr_df = pd.DataFrame(surrogate_rows)
+    if not surr_df.empty:
+        write_table(surr_df, dirs["significance"] / "surrogate_stats.parquet")
 
-    quality_df = pd.concat(quality_rows, ignore_index=True) if quality_rows else pd.DataFrame()
-    write_table(quality_df, dirs["experiments"] / "data_quality.parquet")
+    return pd.concat(all_patterns, ignore_index=True) if all_patterns else pd.DataFrame(), surr_df
 
-    if all_patterns:
-        allp = pd.concat(all_patterns, ignore_index=True)
 
-        # nested-pattern pass across timeframes per asset
-        nested_parts = []
-        rank = {"3min": 1, "5min": 2, "15min": 3, "1h": 4, "4h": 5, "1d": 6, "1w": 7}
-        for asset, g in allp.groupby("asset"):
-            g = g.copy()
-            for tf_low in sorted(g["timeframe"].unique(), key=lambda x: rank.get(x, 999)):
-                lows = g[g["timeframe"] == tf_low]
-                uppers = g[g["timeframe"].map(lambda x: rank.get(x, 0) > rank.get(tf_low, 0))]
-                nested_parts.append(apply_nesting(lows, uppers) if not uppers.empty else lows)
-        allp = pd.concat(nested_parts, ignore_index=True) if nested_parts else allp
+def _run_experiments_layer(cfg: dict, dirs: dict[str, Path], all_patterns: pd.DataFrame | None = None, surrogate_stats: pd.DataFrame | None = None) -> None:
+    if all_patterns is None:
+        frames = []
+        for asset in cfg["assets"]:
+            for tf in cfg["timeframes"]:
+                pfile = dirs["patterns"] / f"{asset}_{tf}_patterns.parquet"
+                try:
+                    p = _read_table(pfile)
+                except FileNotFoundError:
+                    continue
+                if p.empty:
+                    continue
+                for col in ["geometry_params", "context_labels", "outcome_labels"]:
+                    if col in p.columns and p[col].dtype == object:
+                        p[col] = p[col].apply(lambda x: json.loads(x) if isinstance(x, str) and x.startswith("{") else x)
+                frames.append(p)
+        all_patterns = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-        write_table(_serialize_json_cols(allp), dirs["outcomes"] / "all_patterns_with_outcomes.parquet")
-        write_table(_serialize_json_cols(allp), dirs["outcomes"] / "all_patterns_with_outcomes.parquet")
+    if all_patterns.empty:
+        logger.warning("no pattern files available for experiments layer")
+        return
 
-        fail_sess = failure_rate_by_context(allp, "session_bucket")
-        fail_reg = failure_rate_by_context(allp, "vol_regime")
-        write_table(fail_sess, dirs["experiments"] / "failure_by_session.parquet")
-        write_table(fail_reg, dirs["experiments"] / "failure_by_vol_regime.parquet")
-        plot_failure_rates(fail_sess, str(dirs["figures"] / "failure_by_session.png"))
+    rank = {"3min": 1, "5min": 2, "15min": 3, "1h": 4, "4h": 5, "1d": 6, "1w": 7}
+    nested_parts = []
+    for asset, g in all_patterns.groupby("asset"):
+        for tf_low in sorted(g["timeframe"].unique(), key=lambda x: rank.get(x, 999)):
+            lows = g[g["timeframe"] == tf_low]
+            uppers = g[g["timeframe"].map(lambda x: rank.get(x, 0) > rank.get(tf_low, 0))]
+            nested_parts.append(apply_nesting(lows, uppers) if not uppers.empty else lows)
+    allp = pd.concat(nested_parts, ignore_index=True) if nested_parts else all_patterns
 
-        write_table(transfer_summary(allp, cfg.get("experiments", {}).get("base_timeframe", "15min")), dirs["experiments"] / "transfer_summary.parquet")
-        write_table(nesting_summary(allp), dirs["experiments"] / "nesting_summary.parquet")
-        write_table(method_comparison(allp), dirs["experiments"] / "method_comparison.parquet")
+    write_table(_serialize_json_cols(allp), dirs["outcomes"] / "all_patterns_with_outcomes.parquet")
 
-        surr = pd.DataFrame(surrogate_rows)
-        if not surr.empty:
-            write_table(surr, dirs["significance"] / "surrogate_stats.parquet")
-            for null_name, g in surr.groupby("null_model"):
-                ex = existence_table(allp, g)
-                write_table(ex, dirs["significance"] / f"existence_significance_{null_name}.parquet")
+    write_table(failure_rate_by_context(allp, "session_bucket"), dirs["experiments"] / "failure_by_session.parquet")
+    fail_reg = failure_rate_by_context(allp, "vol_regime")
+    write_table(fail_reg, dirs["experiments"] / "failure_by_vol_regime.parquet")
+    write_table(transfer_summary(allp, cfg.get("experiments", {}).get("base_timeframe", "15min")), dirs["experiments"] / "transfer_summary.parquet")
+    write_table(nesting_summary(allp), dirs["experiments"] / "nesting_summary.parquet")
+    write_table(method_comparison(allp), dirs["experiments"] / "method_comparison.parquet")
+    plot_failure_rates(_read_table(dirs["experiments"] / "failure_by_session.parquet"), str(dirs["figures"] / "failure_by_session.png"))
 
-        # surrogate summary (existence placeholders on observed price using null generators)
-        srows = []
-        rng = np.random.default_rng(cfg["seed"])
-        for _, g in allp.groupby(["asset", "timeframe", "pattern_type"]):
-            for _ in range(cfg["surrogates"]["n"]):
-                srows.append({"asset": g["asset"].iloc[0], "timeframe": g["timeframe"].iloc[0], "pattern_type": g["pattern_type"].iloc[0], "count_density": len(g), "strength": float(g["score"].median())})
-        surr = pd.DataFrame(srows)
-        ex = existence_table(allp, surr)
-        write_table(ex, dirs["significance"] / "existence_significance.parquet")
-        write_table(method_comparison(allp), dirs["experiments"] / "method_comparison.parquet")
+    if surrogate_stats is None:
+        try:
+            surrogate_stats = _read_table(dirs["significance"] / "surrogate_stats.parquet")
+        except FileNotFoundError:
+            surrogate_stats = pd.DataFrame()
+    if not surrogate_stats.empty:
+        for null_name, g in surrogate_stats.groupby("null_model"):
+            write_table(existence_table(allp, g), dirs["significance"] / f"existence_significance_{null_name}.parquet")
 
-    logger.info("pipeline completed: %s", dirs["root"])
+
+def run_pipeline(config_path: str, stage: str = "full") -> dict[str, Path]:
+    cfg = AppConfig.from_yaml(config_path).raw
+    np.random.seed(cfg["seed"])
+    dirs = ensure_run_dirs(cfg["paths"]["output_root"], cfg["paths"]["run_name"])
+    Path(dirs["meta"] / "config_used.yaml").write_text(Path(config_path).read_text(encoding="utf-8"), encoding="utf-8")
+    write_table(parameter_table(cfg), dirs["meta"] / "locked_parameters.parquet")
+
+    if stage in ("full", "data"):
+        _run_data_layer(cfg, dirs)
+    if stage in ("full", "detect"):
+        patterns, surr = _run_detection_layer(cfg, dirs)
+    else:
+        patterns, surr = None, None
+    if stage in ("full", "experiments"):
+        _run_experiments_layer(cfg, dirs, patterns, surr)
+
+    logger.info("pipeline completed (%s): %s", stage, dirs["root"])
     return dirs
