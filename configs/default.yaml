@@ -40,12 +40,14 @@ csv:
   timestamp_col: timestamp
   day_first: false
   assume_tz: UTC
+  separator: ","
   cols:
     open: open
     high: high
     low: low
     close: close
     volume: volume
+  asset_overrides: {}
 
 timeframes: [3min, 5min, 15min, 1h, 4h, 1d, 1w]
 

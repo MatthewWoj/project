@@ -1,8 +1,8 @@
-# When Do Chart Patterns Fail? — Research Pipeline
+# Pattern Failures Research Pipeline
 
-Production-quality Python repository for dissertation-grade chart-pattern research from raw 1m OHLCV to detection, outcomes, surrogate significance, and context experiments.
+A dissertation-oriented pipeline that ingests raw 1-minute OHLCV CSV files, reconstructs multi-timeframe bars, detects chart patterns, labels outcomes, and runs surrogate-based significance experiments.
 
-## Setup
+## Quick Start
 
 ```bash
 python -m venv .venv
@@ -11,80 +11,124 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-## Run
+### 1) Copy and edit config
+
+Start from:
+
+- `configs/default.yaml` (baseline)
+- `configs/multi_asset_example.yaml` (real multi-asset CSV example)
+
+Set your real file paths in `input_csv`.
+
+### 2) Run commands
+
+- Full pipeline (recommended first run):
 
 ```bash
-patternfail --config configs/default.yaml
-# or
-python examples/run_pipeline.py
+patternfail --config configs/multi_asset_example.yaml --stage full
 ```
 
-## Repository structure
-
-- `configs/default.yaml` — single run config (assets, paths, thresholds, split, seed).
-- `src/patternfail/data` — ingestion, market-hours masks, quality diagnostics, bar aggregation.
-- `src/patternfail/features` — returns/ATR/volatility/regimes.
-- `src/patternfail/turning_points` — causal ATR-ZigZag pivots.
-- `src/patternfail/detectors` — Lo-style H&S, IEEE comparator, DT/DB, triangles, symbolic channels.
-- `src/patternfail/outcomes` — entry/stop/target/timeout/MFE-MAE labeling.
-- `src/patternfail/stats` — surrogates, Monte Carlo significance, BH-FDR.
-- `src/patternfail/context` — session/volatility/event context labels.
-- `src/patternfail/experiments` — existence, failure context, transfer, nesting, method comparison.
-- `src/patternfail/reporting` — tables + matplotlib plots.
-- `src/patternfail/pipeline.py` — end-to-end orchestrator.
-- `src/patternfail/cli.py` — CLI entrypoint.
-
-## Methodology notes
-
-- **Literature-grounded modules**: computational pattern formalization (Lo-style), SAX symbolic representation, surrogate testing, stationary bootstrap, BH-FDR.
-- **Practical implementation choices**: exact detector thresholds, ATR multipliers, session buckets, and timeout rules (all locked in config).
-- **Pilot-level**: macro-event window labeling via optional events CSV.
-- **Future work**: wedges and bull/bear flags are intentionally out-of-scope for the stable core.
-
-## Outputs
-
-The pipeline saves deterministic run artifacts under `data/outputs/<run_name>/`:
-
-- cleaned 1m tables
-- reconstructed bars by timeframe
-- turning points
-- pattern detections and outcomes (with JSON-serializable geometry/context/outcome fields)
-- data-quality and experiment tables
-- surrogate stats and existence significance tables
-- basic failure plots
-
-## Visual validation recommendation
-
-For manual post-hoc pattern validation, start with **mplfinance** for static OHLC overlays and switch to **plotly** for interactive inspection when needed.
-
-## Notes
-
-- UTC is canonical internal time.
-- Train/test split is config-locked (default 2022–2024 train, 2025 test).
-- No fabricated results are included; this repo implements the pipeline only.
-# Pattern Failures Pipeline
-
-Implementation-ready research scaffold for detecting chart patterns, labeling outcomes, and running surrogate-based significance tests.
-
-## Modules
-
-- `config`: locked thresholds and train/test period.
-- `data_ingest`: canonical 1-minute schema and quality diagnostics.
-- `market_calendars`: venue-aware trading masks.
-- `bar_builder`: deterministic timeframe aggregation.
-- `features`: ATR, returns, realized-volatility regimes.
-- `turning_points`: ATR-scaled ZigZag pivots.
-- `detectors_geometric`: HS/IHS, DT/DB, triangles.
-- `symbolic_transform`: SAX + CPC-inspired symbol-diff features.
-- `detectors_symbolic`: channel baseline detector.
-- `outcomes`: post-confirmation success/failure mechanics.
-- `surrogates`: permutation and stationary-bootstrap generators.
-- `significance`: Monte Carlo p-values and BH-FDR.
-- `experiments`/`reporting`: summary and publication tables.
-
-## Quick start
+- Data layer only (ingest + reconstructed bars + pivots):
 
 ```bash
-pip install -e .
+patternfail --config configs/multi_asset_example.yaml --stage data
+```
+
+- Detection only (reads saved bars/pivots and writes patterns/outcomes/significance stats):
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage detect
+```
+
+- Experiments/reporting only (reads saved pattern outputs):
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage experiments
+```
+
+### Example: single asset
+
+Create a config with:
+
+```yaml
+assets: [AAPL]
+input_csv:
+  AAPL: /ABSOLUTE/PATH/TO/AAPL_1m.csv
+```
+
+Then run:
+
+```bash
+patternfail --config configs/aapl_only.yaml --stage full
+```
+
+### Example: multi asset
+
+Use `configs/multi_asset_example.yaml` with assets:
+
+- AAPL, NVDA, SPY, QQQ
+- EURUSD, GBPUSD, XAUUSD, BTCUSDT
+
+## New-user walkthrough for your BTC + NVDA files
+
+If you are starting from scratch, use `docs/first_run_testing_guide.md`.
+
+It includes exact steps for:
+
+- `BTCUSDT_1m_2022_2025.csv`
+- `NVDA_1min_2022_2025.csv`
+
+and uses `configs/user_btc_nvda_example.yaml` as the starter config.
+
+## CSV Schema and timezone behavior
+
+See `docs/csv_schema.md`.
+
+Highlights:
+
+- Flexible column mapping via `csv.cols` and per-asset `csv.asset_overrides`.
+- Naive timestamps are localized using `assume_tz` then converted to UTC.
+- Internal canonical timestamp is always `ts_utc` (timezone-aware UTC).
+
+## Output locations
+
+All artifacts are written under:
+
+```text
+data/outputs/<run_name>/
+```
+
+See:
+
+- `docs/output_catalog.md`
+- `docs/data_dictionary.md`
+
+## Visual validation (manual pattern review)
+
+Use the review utility to browse by asset/timeframe/pattern type/pattern id and render candle windows with overlays.
+
+```bash
+python scripts/review_detection.py \
+  --run-root data/outputs/real_csv_research \
+  --asset AAPL \
+  --timeframe 15min \
+  --pattern-type HS_TOP \
+  --window-bars 100 \
+  --show-outcome \
+  --save data/outputs/real_csv_research/figures/review_AAPL_15min.png
+```
+
+## Methodology mapping
+
+See `docs/methodology_map.md` for explicit labels:
+
+- literature-grounded
+- practical implementation choice
+- pilot
+- future work
+
+## Tests
+
+```bash
 pytest -q
 ```
