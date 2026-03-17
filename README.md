@@ -103,6 +103,75 @@ See:
 - `docs/output_catalog.md`
 - `docs/data_dictionary.md`
 
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage full
+```
+
+- Data layer only (ingest + reconstructed bars + pivots):
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage data
+```
+
+- Detection only (reads saved bars/pivots and writes patterns/outcomes/significance stats):
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage detect
+```
+
+- Experiments/reporting only (reads saved pattern outputs):
+
+```bash
+patternfail --config configs/multi_asset_example.yaml --stage experiments
+```
+
+### Example: single asset
+
+Create a config with:
+
+```yaml
+assets: [AAPL]
+input_csv:
+  AAPL: /ABSOLUTE/PATH/TO/AAPL_1m.csv
+```
+
+Then run:
+
+```bash
+patternfail --config configs/aapl_only.yaml --stage full
+```
+
+### Example: multi asset
+
+Use `configs/multi_asset_example.yaml` with assets:
+
+- AAPL, NVDA, SPY, QQQ
+- EURUSD, GBPUSD, XAUUSD, BTCUSDT
+
+## CSV Schema and timezone behavior
+
+See `docs/csv_schema.md`.
+
+Highlights:
+
+- Flexible column mapping via `csv.cols` and per-asset `csv.asset_overrides`.
+- Naive timestamps are localized using `assume_tz` then converted to UTC.
+- Internal canonical timestamp is always `ts_utc` (timezone-aware UTC).
+
+## Output locations
+
+All artifacts are written under:
+
+```text
+data/outputs/<run_name>/
+```
+
+See:
+
+- `docs/output_catalog.md`
+- `docs/data_dictionary.md`
+
 ## Visual validation (manual pattern review)
 
 Use the review utility to browse by asset/timeframe/pattern type/pattern id and render candle windows with overlays.
