@@ -338,17 +338,8 @@ def run_pipeline(
         _run_data_layer(cfg, dirs)
     if stage in ("full", "detect"):
         patterns, surr = _run_detection_layer(cfg, dirs, max_workers=max_workers, progress_every=progress_every)
-def run_pipeline(config_path: str, stage: str = "full") -> dict[str, Path]:
-    cfg = AppConfig.from_yaml(config_path).raw
-    np.random.seed(cfg["seed"])
-    dirs = ensure_run_dirs(cfg["paths"]["output_root"], cfg["paths"]["run_name"])
-    Path(dirs["meta"] / "config_used.yaml").write_text(Path(config_path).read_text(encoding="utf-8"), encoding="utf-8")
-    write_table(parameter_table(cfg), dirs["meta"] / "locked_parameters.parquet")
-
-    if stage in ("full", "data"):
-        _run_data_layer(cfg, dirs)
     if stage in ("full", "detect"):
-        patterns, surr = _run_detection_layer(cfg, dirs)
+        patterns, surr = _run_detection_layer(cfg, dirs, max_workers=max_workers, progress_every=progress_every)
     else:
         patterns, surr = None, None
     if stage in ("full", "experiments"):
