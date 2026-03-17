@@ -33,7 +33,15 @@ def main() -> None:
     ap.add_argument("--max-workers", type=int, help="Max thread workers for surrogate detection loop.")
     ap.add_argument("--progress-every", type=int, help="Log surrogate progress every N jobs.")
     args = ap.parse_args()
-    _call_run_pipeline(args)
+    run_pipeline(
+        args.config,
+        stage=args.stage,
+        surrogates_n_override=args.surrogates_n,
+        max_workers_override=args.max_workers,
+        progress_every_override=args.progress_every,
+    )
+    args = ap.parse_args()
+    run_pipeline(args.config, stage=args.stage)
 
 
 if __name__ == "__main__":

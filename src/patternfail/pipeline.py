@@ -171,6 +171,7 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
     surrogate_rows: list[dict] = []
 
     n_surrogates = int(cfg["surrogates"]["n"])
+    rng = np.random.default_rng(cfg["seed"])
 
     for asset in cfg["assets"]:
         venue = cfg["venues"][asset]
@@ -226,6 +227,34 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
                     surrogate_rows.extend(_surrogate_rows_for_task(test, cfg, qlo, qhi, null_name, sidx, seed))
                     if i % max(progress_every, 1) == 0 or i == len(jobs):
                         logger.info("[detect] surrogate progress asset=%s tf=%s %s/%s", asset, tf, i, len(jobs))
+            for sidx in range(cfg["surrogates"]["n"]):
+                for null_name in ("perm", "stationary"):
+                    s_close = (
+                        returns_permutation(test["close"], rng)
+                        if null_name == "perm"
+                        else stationary_bootstrap(test["close"], cfg["surrogates"]["stationary_bootstrap_block"], rng)
+                    )
+                    s_bars = _surrogate_bars_from_test(test, s_close)
+                    s_bars = add_log_returns(s_bars)
+                    s_bars = add_true_range_and_atr(s_bars, cfg["features"]["atr_period"])
+                    s_bars = add_realized_vol(s_bars, cfg["features"]["rv_window"])
+                    s_bars = apply_regimes(s_bars, qlo, qhi)
+                    s_pivots = extract_pivots(s_bars, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
+                    s_patterns = _detect_patterns(s_bars, cfg, s_pivots)
+                    if s_patterns.empty:
+                        continue
+                    for k, g in s_patterns.groupby(["asset", "timeframe", "pattern_type"]):
+                        surrogate_rows.append(
+                            {
+                                "asset": k[0],
+                                "timeframe": k[1],
+                                "pattern_type": k[2],
+                                "null_model": null_name,
+                                "sim_id": sidx,
+                                "count_density": len(g),
+                                "strength": float(g["score"].median()),
+                            }
+                        )
 
     macro_df = pd.DataFrame(macro_rows)
     write_table(macro_df, dirs["experiments"] / "macro_event_labels.parquet")
@@ -309,6 +338,17 @@ def run_pipeline(
         _run_data_layer(cfg, dirs)
     if stage in ("full", "detect"):
         patterns, surr = _run_detection_layer(cfg, dirs, max_workers=max_workers, progress_every=progress_every)
+def run_pipeline(config_path: str, stage: str = "full") -> dict[str, Path]:
+    cfg = AppConfig.from_yaml(config_path).raw
+    np.random.seed(cfg["seed"])
+    dirs = ensure_run_dirs(cfg["paths"]["output_root"], cfg["paths"]["run_name"])
+    Path(dirs["meta"] / "config_used.yaml").write_text(Path(config_path).read_text(encoding="utf-8"), encoding="utf-8")
+    write_table(parameter_table(cfg), dirs["meta"] / "locked_parameters.parquet")
+
+    if stage in ("full", "data"):
+        _run_data_layer(cfg, dirs)
+    if stage in ("full", "detect"):
+        patterns, surr = _run_detection_layer(cfg, dirs)
     else:
         patterns, surr = None, None
     if stage in ("full", "experiments"):
