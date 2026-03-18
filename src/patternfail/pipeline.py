@@ -39,6 +39,18 @@ from patternfail.turning_points.zigzag import extract_pivots
 logger = logging.getLogger(__name__)
 
 
+def _maybe_parse_json_object(value):
+    if isinstance(value, str):
+        value = value.strip()
+        if value.startswith("{"):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return value
+            return parsed if isinstance(parsed, dict) else value
+    return value
+
+
 def _serialize_json_cols(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     for c in ["geometry_params", "context_labels", "outcome_labels"]:
