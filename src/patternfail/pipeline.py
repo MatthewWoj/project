@@ -180,6 +180,11 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
             bars["ts_utc"] = pd.to_datetime(bars["ts_utc"], utc=True)
             pivots = _read_table(dirs["turning_points"] / f"{asset}_{tf}_pivots.parquet")
 
+    for asset in cfg["assets"]:
+        venue = cfg["venues"][asset]
+        for tf in cfg["timeframes"]:
+            bars = _read_table(dirs["bars"] / f"{asset}_{tf}.parquet")
+            bars["ts_utc"] = pd.to_datetime(bars["ts_utc"], utc=True)
             train = bars[(bars["ts_utc"] >= split["train_start"]) & (bars["ts_utc"] <= split["train_end"])].copy()
             test = bars[(bars["ts_utc"] >= split["test_start"]) & (bars["ts_utc"] <= split["test_end"])].copy().reset_index(drop=True)
             if test.empty:
