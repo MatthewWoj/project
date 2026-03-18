@@ -1,6 +1,22 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
+
+
+def _as_mapping(value):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if value.startswith("{"):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def apply_nesting(lower_tf: pd.DataFrame, higher_tf: pd.DataFrame) -> pd.DataFrame:
@@ -20,7 +36,7 @@ def apply_nesting(lower_tf: pd.DataFrame, higher_tf: pd.DataFrame) -> pd.DataFra
 def nesting_summary(patterns: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for nested, g in patterns.groupby(patterns["nested_in_pattern_id"].notna()):
-        rr = [((r["outcome_labels"] or {}).get("status") == "failure") for _, r in g.iterrows()]
-        tte = [((r["outcome_labels"] or {}).get("time_to_exit", 0)) for _, r in g.iterrows()]
+        rr = [(_as_mapping(r["outcome_labels"]).get("status") == "failure") for _, r in g.iterrows()]
+        tte = [(_as_mapping(r["outcome_labels"]).get("time_to_exit", 0)) for _, r in g.iterrows()]
         rows.append({"nested": bool(nested), "n": len(g), "failure_rate": sum(rr) / max(len(rr), 1), "mean_time_to_exit": sum(tte) / max(len(tte), 1)})
     return pd.DataFrame(rows)
