@@ -21,15 +21,20 @@ def detect_double_patterns(bars: pd.DataFrame, pivots: pd.DataFrame, peak_tol: f
         if sim > peak_tol:
             continue
         mid = int(s["pivot_index"].iloc[1])
-        atr = float(bars.loc[mid, "atr"]) if pd.notna(bars.loc[mid, "atr"]) else 0.0
+        if mid < 0 or mid >= len(bars):
+            continue
+        atr_v = bars.iloc[mid]["atr"]
+        atr = float(atr_v) if pd.notna(atr_v) else 0.0
         depth = (min(x1, x3) - x2) if top else (x2 - max(x1, x3))
         if depth < min_depth_atr * atr:
             continue
         confirm = None
         p3 = int(s["pivot_index"].iloc[2])
         for j in range(p3 + 1, len(bars)):
-            c = float(bars.loc[j, "close"])
-            a = float(bars.loc[j, "atr"]) if pd.notna(bars.loc[j, "atr"]) else 0.0
+            c_v = bars.iloc[j]["close"]
+            a_v = bars.iloc[j]["atr"]
+            c = float(c_v)
+            a = float(a_v) if pd.notna(a_v) else 0.0
             if (top and c < x2 - beta_atr * a) or ((not top) and c > x2 + beta_atr * a):
                 confirm = j
                 break
@@ -38,7 +43,7 @@ def detect_double_patterns(bars: pd.DataFrame, pivots: pd.DataFrame, peak_tol: f
         out.append({
             "pattern_id": str(uuid.uuid4()), "asset": bars["asset"].iloc[0], "venue_type": bars["venue_type"].iloc[0], "timeframe": bars["timeframe"].iloc[0],
             "pattern_type": "DT" if top else "DB", "direction": "SHORT" if top else "LONG",
-            "t_start_utc": s["ts_utc"].iloc[0], "t_end_utc": s["ts_utc"].iloc[2], "t_confirm_utc": bars.loc[confirm, "ts_utc"],
+            "t_start_utc": s["ts_utc"].iloc[0], "t_end_utc": s["ts_utc"].iloc[2], "t_confirm_utc": bars.iloc[confirm]["ts_utc"],
             "score": float(sim), "geometry_params": {"similarity": float(sim), "depth": float(depth)},
             "detector_family": "geometric", "detector_name": "double_patterns", "context_labels": {}, "nested_in_pattern_id": None, "outcome_labels": None,
         })
