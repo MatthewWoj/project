@@ -59,14 +59,6 @@ def _serialize_json_cols(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _deserialize_json_cols(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    for c in ["geometry_params", "context_labels", "outcome_labels"]:
-        if c in out.columns and out[c].dtype == object:
-            out[c] = out[c].apply(_maybe_parse_json_object)
-    return out
-
-
 def _read_table(path: Path) -> pd.DataFrame:
     if path.suffix == ".parquet" and path.exists():
         return pd.read_parquet(path)
@@ -191,6 +183,14 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
     surrogate_rows: list[dict] = []
 
     n_surrogates = int(cfg["surrogates"]["n"])
+    rng = np.random.default_rng(cfg["seed"])
+
+    for asset in cfg["assets"]:
+        venue = cfg["venues"][asset]
+        for tf in cfg["timeframes"]:
+            bars = _read_table(dirs["bars"] / f"{asset}_{tf}.parquet")
+            bars["ts_utc"] = pd.to_datetime(bars["ts_utc"], utc=True)
+            pivots = _read_table(dirs["turning_points"] / f"{asset}_{tf}_pivots.parquet")
 
     for asset in cfg["assets"]:
         venue = cfg["venues"][asset]
@@ -205,7 +205,6 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
 
             qlo, qhi = fit_regime_quantiles(train, tuple(cfg["features"]["regime_q"])) if not train.empty else (bars["rv"].quantile(0.33), bars["rv"].quantile(0.66))
             test = apply_regimes(test, qlo, qhi)
-            pivots = extract_pivots(test, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
             p = _detect_patterns(test, cfg, pivots)
             if p.empty:
                 logger.info("[detect] asset=%s tf=%s patterns=0", asset, tf)
@@ -245,6 +244,34 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
                     surrogate_rows.extend(_surrogate_rows_for_task(test, cfg, qlo, qhi, null_name, sidx, seed))
                     if i % max(progress_every, 1) == 0 or i == len(jobs):
                         logger.info("[detect] surrogate progress asset=%s tf=%s %s/%s", asset, tf, i, len(jobs))
+            for sidx in range(cfg["surrogates"]["n"]):
+                for null_name in ("perm", "stationary"):
+                    s_close = (
+                        returns_permutation(test["close"], rng)
+                        if null_name == "perm"
+                        else stationary_bootstrap(test["close"], cfg["surrogates"]["stationary_bootstrap_block"], rng)
+                    )
+                    s_bars = _surrogate_bars_from_test(test, s_close)
+                    s_bars = add_log_returns(s_bars)
+                    s_bars = add_true_range_and_atr(s_bars, cfg["features"]["atr_period"])
+                    s_bars = add_realized_vol(s_bars, cfg["features"]["rv_window"])
+                    s_bars = apply_regimes(s_bars, qlo, qhi)
+                    s_pivots = extract_pivots(s_bars, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
+                    s_patterns = _detect_patterns(s_bars, cfg, s_pivots)
+                    if s_patterns.empty:
+                        continue
+                    for k, g in s_patterns.groupby(["asset", "timeframe", "pattern_type"]):
+                        surrogate_rows.append(
+                            {
+                                "asset": k[0],
+                                "timeframe": k[1],
+                                "pattern_type": k[2],
+                                "null_model": null_name,
+                                "sim_id": sidx,
+                                "count_density": len(g),
+                                "strength": float(g["score"].median()),
+                            }
+                        )
 
     macro_df = pd.DataFrame(macro_rows)
     write_table(macro_df, dirs["experiments"] / "macro_event_labels.parquet")
@@ -267,7 +294,10 @@ def _run_experiments_layer(cfg: dict, dirs: dict[str, Path], all_patterns: pd.Da
                     continue
                 if p.empty:
                     continue
-                frames.append(_deserialize_json_cols(p))
+                for col in ["geometry_params", "context_labels", "outcome_labels"]:
+                    if col in p.columns and p[col].dtype == object:
+                        p[col] = p[col].apply(lambda x: json.loads(x) if isinstance(x, str) and x.startswith("{") else x)
+                frames.append(p)
         all_patterns = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
     if all_patterns.empty:
@@ -323,6 +353,8 @@ def run_pipeline(
 
     if stage in ("full", "data"):
         _run_data_layer(cfg, dirs)
+    if stage in ("full", "detect"):
+        patterns, surr = _run_detection_layer(cfg, dirs, max_workers=max_workers, progress_every=progress_every)
     if stage in ("full", "detect"):
         patterns, surr = _run_detection_layer(cfg, dirs, max_workers=max_workers, progress_every=progress_every)
     else:
