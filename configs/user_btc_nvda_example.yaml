@@ -1,0 +1,95 @@
+seed: 42
+
+split:
+  train_start: '2022-01-01'
+  train_end: '2024-12-31'
+  test_start: '2025-01-01'
+  test_end: '2025-12-31'
+
+assets: [BTCUSDT, NVDA]
+
+venues:
+  BTCUSDT: crypto
+  NVDA: equity_us
+
+input_csv:
+  BTCUSDT: /REPLACE/WITH/YOUR/PATH/BTCUSDT_1m_2022_2025.csv
+  NVDA: /REPLACE/WITH/YOUR/PATH/NVDA_1min_2022_2025.csv
+
+csv:
+  timestamp_col: timestamp
+  day_first: false
+  assume_tz: UTC
+  separator: ","
+  cols:
+    open: open
+    high: high
+    low: low
+    close: close
+    volume: volume
+
+  asset_overrides:
+    BTCUSDT:
+      timestamp_col: open_time_utc
+      separator: "\t"
+      assume_tz: UTC
+      cols:
+        open: open
+        high: high
+        low: low
+        close: close
+        volume: volume
+    NVDA:
+      timestamp_col: datetime_utc
+      day_first: true
+      assume_tz: UTC
+      separator: ","
+      cols:
+        open: open
+        high: high
+        low: low
+        close: close
+        volume: volume
+
+timeframes: [3min, 5min, 15min, 1h, 4h, 1d, 1w]
+
+features:
+  atr_period: 14
+  rv_window: 60
+  regime_q: [0.33, 0.66]
+
+turning_points:
+  atr_lambda: 2.0
+  min_separation_bars: 3
+
+detectors:
+  hs: { shoulder_tol: 0.08, trough_tol: 0.10, confirm_beta_atr: 0.2 }
+  hs_ieee: { enabled: true, keypoint_window: 180, min_prominence_atr: 0.7 }
+  double: { peak_tol: 0.04, min_depth_atr: 1.0, confirm_beta_atr: 0.2 }
+  triangle: { window_pivots: 8, convergence_ratio: 0.7, residual_eta_atr: 0.75, confirm_beta_atr: 0.2 }
+  symbolic: { sax_window: 80, paa_segments: 12, alphabet_size: 7, smoothness_weight: 0.3, residual_weight: 0.7, channel_threshold: 0.75 }
+
+quality:
+  stale_close_run: 10
+  stale_zero_range_run: 10
+
+outcomes:
+  timeout_bars: 60
+  atr_stop_margin: 0.5
+  default_target_r: 1.5
+
+surrogates:
+  n: 20
+  stationary_bootstrap_block: 30
+
+paths:
+  output_root: data/outputs
+  run_name: user_btc_nvda
+  events_csv: data/events/events.csv
+
+runtime:
+  max_workers: 1
+  progress_every: 5
+
+experiments:
+  base_timeframe: 15min
