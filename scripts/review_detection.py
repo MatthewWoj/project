@@ -45,63 +45,6 @@ def _plot_pivots(ax, pivots_used):
         )
 
 
-def _visible_index_series(bars: pd.DataFrame) -> np.ndarray:
-    return bars.index.to_numpy(dtype=float)
-
-
-def _bars_since_start(bars: pd.DataFrame, start_ts: pd.Timestamp, end_ts: pd.Timestamp | None = None) -> np.ndarray:
-    values = np.full(len(bars), np.nan)
-    active = bars["ts_utc"] >= start_ts
-    if end_ts is not None:
-        active &= bars["ts_utc"] <= end_ts
-    count = 0
-    for i, use in enumerate(active):
-        if use:
-            values[i] = count
-            count += 1
-    return values
-
-
-def _line_values(line: dict, bars: pd.DataFrame, geom: dict) -> np.ndarray | None:
-    if not line:
-        return None
-    indices = _visible_index_series(bars)
-    if line.get("kind") == "horizontal":
-        values = np.full(len(indices), float(line["value"]))
-    else:
-        index_mode = line.get("index_mode")
-        if index_mode == "bars_since_start":
-            start_ts = pd.Timestamp(line.get("start_ts", geom.get("t_start_utc", bars["ts_utc"].iloc[0])))
-            end_ts = pd.Timestamp(line["end_ts"]) if line.get("end_ts") else None
-            x = _bars_since_start(bars, start_ts, end_ts)
-        else:
-            indices = _visible_index_series(bars)
-            start_idx = int(geom.get("candidate_window_bounds", {}).get("start_idx", int(indices[0]) if len(indices) else 0))
-            if index_mode == "local_from_start":
-                x = indices - start_idx
-            else:
-                x = indices
-        values = float(line["slope"]) * x + float(line["intercept"])
-    if line.get("kind") == "horizontal":
-        values = values.astype(float)
-    if line.get("coordinate_system") == "log_price":
-        values = np.exp(values)
-    return values
-
-
-def _plot_line(ax, bars: pd.DataFrame, geom: dict, line: dict, label: str, style: str) -> bool:
-    values = _line_values(line, bars, geom)
-    if values is None:
-        return False
-    price_low = float(bars["low"].min())
-    price_high = float(bars["high"].max())
-    span = max(price_high - price_low, 1e-9)
-    if np.nanmin(values) < price_low - 5 * span or np.nanmax(values) > price_high + 5 * span:
-        return False
-    ax.plot(bars["ts_utc"], values, style, label=label, linewidth=1.6)
-    return True
-
-
 def _add_annotation(ax, geom: dict, pat: pd.Series):
     score_components = geom.get("score_components", {})
     confirmation_reason = geom.get("confirmation_reason")
@@ -163,45 +106,32 @@ def plot_detection(run_root: Path, asset: str, timeframe: str, pattern_id: str |
 
     geom = _to_dict(pat.get("geometry_params"))
     fitted = geom.get("fitted_lines", {})
+    if "neckline_slope" in geom and "neckline_intercept" in geom:
+        x = pd.Series(range(lo, hi + 1))
+        y = geom["neckline_slope"] * x + geom["neckline_intercept"]
+        ax.plot(b["ts_utc"], y, linestyle="--", label="neckline")
     if "neckline" in fitted:
-        _plot_line(ax, b, geom, fitted["neckline"], "neckline", "--")
-    elif "neckline_slope" in geom and "neckline_intercept" in geom:
-        legacy = {
-            "kind": "affine",
-            "slope": geom["neckline_slope"],
-            "intercept": geom["neckline_intercept"],
-            "coordinate_system": "raw_price",
-            "index_mode": "global",
-        }
-        _plot_line(ax, b, geom, legacy, "neckline", "--")
+        x = pd.Series(range(lo, hi + 1))
+        y = fitted["neckline"]["slope"] * x + fitted["neckline"]["intercept"]
+        ax.plot(b["ts_utc"], y, linestyle="--", label="neckline")
+    if "upper_slope" in geom and "upper_intercept" in geom:
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], geom["upper_slope"] * x + geom["upper_intercept"], linestyle="--", label="upper boundary")
+    if "lower_slope" in geom and "lower_intercept" in geom:
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], geom["lower_slope"] * x + geom["lower_intercept"], linestyle="--", label="lower boundary")
     if "upper" in fitted:
-        _plot_line(ax, b, geom, fitted["upper"], "upper boundary", "--")
-    elif "upper_slope" in geom and "upper_intercept" in geom:
-        legacy = {
-            "kind": "affine",
-            "slope": geom["upper_slope"],
-            "intercept": geom["upper_intercept"],
-            "coordinate_system": "raw_price",
-            "index_mode": "global",
-        }
-        _plot_line(ax, b, geom, legacy, "upper boundary", "--")
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], fitted["upper"]["slope"] * x + fitted["upper"]["intercept"], linestyle="--", label="upper boundary")
     if "lower" in fitted:
-        _plot_line(ax, b, geom, fitted["lower"], "lower boundary", "--")
-    elif "lower_slope" in geom and "lower_intercept" in geom:
-        legacy = {
-            "kind": "affine",
-            "slope": geom["lower_slope"],
-            "intercept": geom["lower_intercept"],
-            "coordinate_system": "raw_price",
-            "index_mode": "global",
-        }
-        _plot_line(ax, b, geom, legacy, "lower boundary", "--")
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], fitted["lower"]["slope"] * x + fitted["lower"]["intercept"], linestyle="--", label="lower boundary")
     if "center" in fitted:
-        _plot_line(ax, b, geom, fitted["center"], "centerline", "-.")
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], fitted["center"]["slope"] * x + fitted["center"]["intercept"], linestyle="-.", label="centerline")
 
     if geom.get("detection_status") != "STRUCTURAL_ONLY":
-        if b["ts_utc"].min() <= pat["t_confirm_utc"] <= b["ts_utc"].max():
-            ax.axvline(pat["t_confirm_utc"], color="blue", linestyle=":", label="confirmation")
+        ax.axvline(pat["t_confirm_utc"], color="blue", linestyle=":", label="confirmation")
     else:
         ax.axvspan(pat["t_start_utc"], pat["t_end_utc"], color="blue", alpha=0.08, label="structure window")
 
