@@ -16,12 +16,14 @@ class IngestReport:
 
 
 def ingest_asset_csv(asset: str, venue_type: str, csv_path: str, csv_cfg: dict) -> tuple[pd.DataFrame, IngestReport]:
-    c = csv_cfg["cols"]
-    ts_col = csv_cfg["timestamp_col"]
-    day_first = bool(csv_cfg.get("day_first", False))
-    assume_tz = csv_cfg.get("assume_tz", "UTC")
+    override = csv_cfg.get("asset_overrides", {}).get(asset, {})
+    c = override.get("cols", csv_cfg["cols"])
+    ts_col = override.get("timestamp_col", csv_cfg["timestamp_col"])
+    day_first = bool(override.get("day_first", csv_cfg.get("day_first", False)))
+    assume_tz = override.get("assume_tz", csv_cfg.get("assume_tz", "UTC"))
+    sep = override.get("separator", csv_cfg.get("separator", ","))
 
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, sep=sep)
     rename = {
         ts_col: "ts_utc",
         c["open"]: "open",
@@ -36,7 +38,8 @@ def ingest_asset_csv(asset: str, venue_type: str, csv_path: str, csv_cfg: dict) 
         raise ValueError(f"Missing required columns in {asset}: {missing}")
 
     ts = pd.to_datetime(df["ts_utc"], errors="coerce", dayfirst=day_first)
-    ts = ts.dt.tz_localize(assume_tz) if ts.dt.tz is None else ts
+    if ts.dt.tz is None:
+        ts = ts.dt.tz_localize(assume_tz, ambiguous="infer", nonexistent="shift_forward")
     df["ts_utc"] = ts.dt.tz_convert("UTC")
 
     for col in ["open", "high", "low", "close", "volume"]:
