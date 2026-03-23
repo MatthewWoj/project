@@ -26,6 +26,50 @@ def _to_dict(v):
     return {}
 
 
+def _plot_pivots(ax, pivots_used):
+    for pivot in pivots_used:
+        ts = pd.Timestamp(pivot["ts_utc"])
+        price = float(pivot["pivot_price"])
+        marker = "^" if pivot.get("pivot_type") == "HIGH" else "v"
+        color = "purple" if pivot.get("pivot_type") == "HIGH" else "orange"
+        ax.scatter(ts, price, marker=marker, color=color, s=70, zorder=5)
+        ax.annotate(
+            pivot.get("label", ""),
+            (ts, price),
+            textcoords="offset points",
+            xytext=(0, 8 if marker == "^" else -14),
+            ha="center",
+            color=color,
+            fontsize=8,
+        )
+
+
+def _add_annotation(ax, geom: dict, pat: pd.Series):
+    score_components = geom.get("score_components", {})
+    confirmation_reason = geom.get("confirmation_reason")
+    status = geom.get("detection_status")
+    lines = [
+        f"{pat['pattern_type']} | {pat['detector_name']}",
+        f"score={pat['score']:.4f}",
+    ]
+    if status:
+        lines.append(f"status={status}")
+    if confirmation_reason:
+        lines.append(f"confirm={confirmation_reason}")
+    for key in list(score_components)[:4]:
+        lines.append(f"{key}={score_components[key]:.4f}" if isinstance(score_components[key], (int, float)) else f"{key}={score_components[key]}")
+    ax.text(
+        0.01,
+        0.99,
+        "\n".join(lines),
+        transform=ax.transAxes,
+        va="top",
+        ha="left",
+        fontsize=8,
+        bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "gray"},
+    )
+
+
 def plot_detection(run_root: Path, asset: str, timeframe: str, pattern_id: str | None, pattern_type: str | None, window_bars: int, show_outcome: bool, save_path: Path | None):
     bars = _read_table(run_root / "bars" / f"{asset}_{timeframe}.parquet")
     patterns = _read_table(run_root / "patterns" / f"{asset}_{timeframe}_patterns.parquet")
@@ -54,9 +98,14 @@ def plot_detection(run_root: Path, asset: str, timeframe: str, pattern_id: str |
         ax.add_patch(plt.Rectangle((t - 0.0008, body_low), 0.0016, abs(r["close"] - r["open"]) + 1e-8, color=color, alpha=0.7))
 
     geom = _to_dict(pat.get("geometry_params"))
+    fitted = geom.get("fitted_lines", {})
     if "neckline_slope" in geom and "neckline_intercept" in geom:
         x = pd.Series(range(lo, hi + 1))
         y = geom["neckline_slope"] * x + geom["neckline_intercept"]
+        ax.plot(b["ts_utc"], y, linestyle="--", label="neckline")
+    if "neckline" in fitted:
+        x = pd.Series(range(lo, hi + 1))
+        y = fitted["neckline"]["slope"] * x + fitted["neckline"]["intercept"]
         ax.plot(b["ts_utc"], y, linestyle="--", label="neckline")
     if "upper_slope" in geom and "upper_intercept" in geom:
         x = pd.Series(range(lo, hi + 1))
@@ -64,8 +113,23 @@ def plot_detection(run_root: Path, asset: str, timeframe: str, pattern_id: str |
     if "lower_slope" in geom and "lower_intercept" in geom:
         x = pd.Series(range(lo, hi + 1))
         ax.plot(b["ts_utc"], geom["lower_slope"] * x + geom["lower_intercept"], linestyle="--", label="lower boundary")
+    if "upper" in fitted:
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], fitted["upper"]["slope"] * x + fitted["upper"]["intercept"], linestyle="--", label="upper boundary")
+    if "lower" in fitted:
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], fitted["lower"]["slope"] * x + fitted["lower"]["intercept"], linestyle="--", label="lower boundary")
+    if "center" in fitted:
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], fitted["center"]["slope"] * x + fitted["center"]["intercept"], linestyle="-.", label="centerline")
 
-    ax.axvline(pat["t_confirm_utc"], color="blue", linestyle=":", label="confirmation")
+    if geom.get("detection_status") != "STRUCTURAL_ONLY":
+        ax.axvline(pat["t_confirm_utc"], color="blue", linestyle=":", label="confirmation")
+    else:
+        ax.axvspan(pat["t_start_utc"], pat["t_end_utc"], color="blue", alpha=0.08, label="structure window")
+
+    _plot_pivots(ax, geom.get("pivots_used", []))
+    _add_annotation(ax, geom, pat)
     ax.set_title(f"{asset} {timeframe} {pat['pattern_type']} {pat['pattern_id']}")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d\n%H:%M"))
     ax.legend(loc="best")

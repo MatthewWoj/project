@@ -78,6 +78,30 @@ For initial sanity checks, you can run fewer surrogates and see frequent progres
 patternfail --config configs/my_run.yaml --stage detect --surrogates-n 5 --max-workers 4 --progress-every 2
 ```
 
+### Recommended setup for the bundled BTC + NVDA example
+
+The starter config `configs/user_btc_nvda_example.yaml` now already defaults to a quicker first pass:
+
+- `surrogates.n: 6`
+- `runtime.max_workers: 8`
+- `runtime.progress_every: 2`
+- pattern de-duplication enabled
+
+That means you can:
+
+```bash
+cp configs/user_btc_nvda_example.yaml configs/my_run.yaml
+# edit input_csv.BTCUSDT and input_csv.NVDA
+patternfail --config configs/my_run.yaml --stage data
+patternfail --config configs/my_run.yaml --stage detect
+```
+
+If your machine has more CPU cores, a heavier but still practical command is:
+
+```bash
+patternfail --config configs/my_run.yaml --stage detect --surrogates-n 8 --max-workers 12 --progress-every 2
+```
+
 ## 6) Run experiments/reporting
 
 ```bash
@@ -111,3 +135,9 @@ You can also select a specific `--pattern-id`.
 - If files are comma-separated (not tab-separated), set `csv.asset_overrides.BTCUSDT.separator: ","`.
 - If NVDA dates are interpreted incorrectly, keep `day_first: true` for NVDA.
 - If parquet dependencies are unavailable, outputs will be written as CSV automatically.
+
+## Interpretability / manual validation tips
+
+- The review script reads either parquet or CSV outputs automatically and now uses richer debug payloads stored in `geometry_params`.
+- Geometric detections should show pivot markers (`P1`, `P2`, ...) and fitted lines such as necklines or triangle boundaries.
+- Channel detections are treated as structural windows by default, so the review artifact highlights the detected structure instead of drawing a visually misleading fake confirmation line.
