@@ -93,7 +93,8 @@ def _detect_patterns(bars: pd.DataFrame, cfg: dict, pivots: pd.DataFrame) -> pd.
     ]
     if dcfg["hs_ieee"]["enabled"]:
         patterns.append(detect_hs_ieee_comparator(bars, dcfg["hs_ieee"]["keypoint_window"], dcfg["hs_ieee"]["min_prominence_atr"]))
-    return pd.concat([x for x in patterns if not x.empty], ignore_index=True) if any(not x.empty for x in patterns) else pd.DataFrame()
+    combined = pd.concat([x for x in patterns if not x.empty], ignore_index=True) if any(not x.empty for x in patterns) else pd.DataFrame()
+    return _deduplicate_patterns(combined, cfg)
 
 
 def _surrogate_bars_from_test(test_bars: pd.DataFrame, surrogate_close: pd.Series) -> pd.DataFrame:
