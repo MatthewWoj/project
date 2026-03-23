@@ -79,7 +79,7 @@ outcomes:
   default_target_r: 1.5
 
 surrogates:
-  n: 20
+  n: 6
   stationary_bootstrap_block: 30
 
 paths:
@@ -88,8 +88,13 @@ paths:
   events_csv: data/events/events.csv
 
 runtime:
-  max_workers: 1
-  progress_every: 5
+  max_workers: 8
+  progress_every: 2
+
+dedup:
+  enabled: true
+  overlap_threshold: 0.8
+  confirm_within_bars: 3
 
 experiments:
   base_timeframe: 15min
