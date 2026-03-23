@@ -135,3 +135,9 @@ You can also select a specific `--pattern-id`.
 - If files are comma-separated (not tab-separated), set `csv.asset_overrides.BTCUSDT.separator: ","`.
 - If NVDA dates are interpreted incorrectly, keep `day_first: true` for NVDA.
 - If parquet dependencies are unavailable, outputs will be written as CSV automatically.
+
+## Interpretability / manual validation tips
+
+- The review script reads either parquet or CSV outputs automatically and now uses richer debug payloads stored in `geometry_params`.
+- Geometric detections should show pivot markers (`P1`, `P2`, ...) and fitted lines such as necklines or triangle boundaries.
+- Channel detections are treated as structural windows by default, so the review artifact highlights the detected structure instead of drawing a visually misleading fake confirmation line.

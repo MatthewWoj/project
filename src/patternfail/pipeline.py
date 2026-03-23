@@ -11,7 +11,7 @@ import pandas as pd
 from patternfail.common.config import AppConfig
 from patternfail.common.io import write_table
 from patternfail.common.paths import ensure_run_dirs
-from patternfail.context.events import label_event_window, load_events
+from patternfail.context.events import label_event_context, load_events
 from patternfail.context.sessions import session_bucket
 from patternfail.context.volatility_context import label_pattern_vol_context
 from patternfail.data.bars import aggregate_bars
@@ -34,6 +34,7 @@ from patternfail.outcomes.engine import label_outcomes
 from patternfail.reporting.plots import plot_failure_rates
 from patternfail.reporting.tables import parameter_table
 from patternfail.stats.surrogates import returns_permutation, stationary_bootstrap
+from patternfail.turning_points.extrema import extract_pivots_smoothed_extrema
 from patternfail.turning_points.zigzag import extract_pivots
 
 logger = logging.getLogger(__name__)
@@ -154,12 +155,29 @@ def _detect_patterns(bars: pd.DataFrame, cfg: dict, pivots: pd.DataFrame) -> pd.
             dcfg["symbolic"]["residual_weight"],
             dcfg["symbolic"]["smoothness_weight"],
             dcfg["symbolic"]["channel_threshold"],
+            dcfg["symbolic"].get("max_residual_ratio", 0.45),
+            dcfg["symbolic"].get("min_r2", 0.6),
         ),
     ]
     if dcfg["hs_ieee"]["enabled"]:
         patterns.append(detect_hs_ieee_comparator(bars, dcfg["hs_ieee"]["keypoint_window"], dcfg["hs_ieee"]["min_prominence_atr"]))
     combined = pd.concat([x for x in patterns if not x.empty], ignore_index=True) if any(not x.empty for x in patterns) else pd.DataFrame()
     return _deduplicate_patterns(combined, cfg)
+
+
+def _extract_pivots_for_cfg(bars: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    tcfg = cfg["turning_points"]
+    method = tcfg.get("method", "atr_zigzag")
+    if method == "atr_zigzag":
+        return extract_pivots(bars, tcfg["atr_lambda"], tcfg["min_separation_bars"])
+    if method == "smoothed_extrema":
+        return extract_pivots_smoothed_extrema(
+            bars,
+            smoothing_window=int(tcfg.get("smoothing_window", 5)),
+            prominence_atr=float(tcfg.get("prominence_atr", 0.8)),
+            min_sep=int(tcfg["min_separation_bars"]),
+        )
+    raise ValueError(f"Unsupported turning_points.method: {method}")
 
 
 def _surrogate_bars_from_test(test_bars: pd.DataFrame, surrogate_close: pd.Series) -> pd.DataFrame:
@@ -192,7 +210,7 @@ def _surrogate_rows_for_task(
     s_bars = add_true_range_and_atr(s_bars, cfg["features"]["atr_period"])
     s_bars = add_realized_vol(s_bars, cfg["features"]["rv_window"])
     s_bars = apply_regimes(s_bars, qlo, qhi)
-    s_pivots = extract_pivots(s_bars, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
+    s_pivots = _extract_pivots_for_cfg(s_bars, cfg)
     s_patterns = _detect_patterns(s_bars, cfg, s_pivots)
     if s_patterns.empty:
         return []
@@ -234,7 +252,7 @@ def _run_data_layer(cfg: dict, dirs: dict[str, Path]) -> None:
             bars = add_realized_vol(bars, cfg["features"]["rv_window"])
             write_table(bars, dirs["bars"] / f"{asset}_{tf}.parquet")
 
-            pivots = extract_pivots(bars, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
+            pivots = _extract_pivots_for_cfg(bars, cfg)
             write_table(pivots, dirs["turning_points"] / f"{asset}_{tf}_pivots.parquet")
 
     quality_df = pd.concat(quality_rows, ignore_index=True) if quality_rows else pd.DataFrame()
@@ -267,6 +285,7 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
 
             qlo, qhi = fit_regime_quantiles(train, tuple(cfg["features"]["regime_q"])) if not train.empty else (bars["rv"].quantile(0.33), bars["rv"].quantile(0.66))
             test = apply_regimes(test, qlo, qhi)
+            pivots = _extract_pivots_for_cfg(test, cfg)
             p = _detect_patterns(test, cfg, pivots)
             if p.empty:
                 logger.info("[detect] asset=%s tf=%s patterns=0", asset, tf)
@@ -276,9 +295,15 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
 
             for i, row in p.iterrows():
                 ctx = dict(row["context_labels"] or {})
-                event_label = label_event_window(pd.Timestamp(row["t_confirm_utc"]), events)
+                event_ctx = label_event_context(
+                    pd.Timestamp(row["t_confirm_utc"]),
+                    events,
+                    pre_minutes=int(cfg.get("events", {}).get("pre_minutes", 30)),
+                    post_minutes=int(cfg.get("events", {}).get("post_minutes", 30)),
+                )
                 ctx["session_bucket"] = session_bucket(pd.Timestamp(row["t_confirm_utc"]), venue)
-                ctx["event_window"] = event_label
+                ctx.update(event_ctx)
+                event_label = event_ctx["event_window"]
                 p.at[i, "context_labels"] = ctx
                 macro_rows.append({"pattern_id": row["pattern_id"], "asset": row["asset"], "timeframe": row["timeframe"], "event_window": event_label})
 
