@@ -78,6 +78,30 @@ For initial sanity checks, you can run fewer surrogates and see frequent progres
 patternfail --config configs/my_run.yaml --stage detect --surrogates-n 5 --max-workers 4 --progress-every 2
 ```
 
+### Recommended setup for the bundled BTC + NVDA example
+
+The starter config `configs/user_btc_nvda_example.yaml` now already defaults to a quicker first pass:
+
+- `surrogates.n: 6`
+- `runtime.max_workers: 8`
+- `runtime.progress_every: 2`
+- pattern de-duplication enabled
+
+That means you can:
+
+```bash
+cp configs/user_btc_nvda_example.yaml configs/my_run.yaml
+# edit input_csv.BTCUSDT and input_csv.NVDA
+patternfail --config configs/my_run.yaml --stage data
+patternfail --config configs/my_run.yaml --stage detect
+```
+
+If your machine has more CPU cores, a heavier but still practical command is:
+
+```bash
+patternfail --config configs/my_run.yaml --stage detect --surrogates-n 8 --max-workers 12 --progress-every 2
+```
+
 ## 6) Run experiments/reporting
 
 ```bash
