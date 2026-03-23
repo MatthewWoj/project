@@ -11,7 +11,7 @@ import pandas as pd
 from patternfail.common.config import AppConfig
 from patternfail.common.io import write_table
 from patternfail.common.paths import ensure_run_dirs
-from patternfail.context.events import label_event_window, load_events
+from patternfail.context.events import label_event_context, load_events
 from patternfail.context.sessions import session_bucket
 from patternfail.context.volatility_context import label_pattern_vol_context
 from patternfail.data.bars import aggregate_bars
@@ -34,9 +34,75 @@ from patternfail.outcomes.engine import label_outcomes
 from patternfail.reporting.plots import plot_failure_rates
 from patternfail.reporting.tables import parameter_table
 from patternfail.stats.surrogates import returns_permutation, stationary_bootstrap
+from patternfail.turning_points.extrema import extract_pivots_smoothed_extrema
 from patternfail.turning_points.zigzag import extract_pivots
 
 logger = logging.getLogger(__name__)
+
+
+def _timeframe_to_timedelta(timeframe: str) -> pd.Timedelta:
+    value = str(timeframe).strip().lower()
+    mapping = {
+        "min": "min",
+        "m": "min",
+        "h": "h",
+        "d": "d",
+        "w": "w",
+    }
+    for suffix, unit in mapping.items():
+        if value.endswith(suffix) and value[: -len(suffix)]:
+            return pd.to_timedelta(int(value[: -len(suffix)]), unit=unit)
+    raise ValueError(f"Unsupported timeframe: {timeframe}")
+
+
+def _interval_overlap_ratio(left: pd.Series, right: pd.Series) -> float:
+    start = max(pd.Timestamp(left["t_start_utc"]), pd.Timestamp(right["t_start_utc"]))
+    end = min(pd.Timestamp(left["t_end_utc"]), pd.Timestamp(right["t_end_utc"]))
+    overlap = max((end - start).total_seconds(), 0.0)
+    left_span = max((pd.Timestamp(left["t_end_utc"]) - pd.Timestamp(left["t_start_utc"])).total_seconds(), 0.0)
+    right_span = max((pd.Timestamp(right["t_end_utc"]) - pd.Timestamp(right["t_start_utc"])).total_seconds(), 0.0)
+    union = max(left_span + right_span - overlap, 0.0)
+    return 0.0 if union == 0.0 else overlap / union
+
+
+def _deduplicate_patterns(patterns: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    if patterns.empty:
+        return patterns
+
+    dedup_cfg = cfg.get("dedup", {})
+    if not dedup_cfg.get("enabled", True):
+        return patterns.reset_index(drop=True)
+
+    overlap_threshold = float(dedup_cfg.get("overlap_threshold", 0.8))
+    confirm_within_bars = int(dedup_cfg.get("confirm_within_bars", 3))
+
+    work = patterns.copy()
+    for col in ("t_start_utc", "t_end_utc", "t_confirm_utc"):
+        work[col] = pd.to_datetime(work[col], utc=True)
+    work = work.sort_values(
+        ["asset", "timeframe", "pattern_type", "t_confirm_utc", "t_start_utc", "t_end_utc", "pattern_id"],
+        kind="stable",
+    ).reset_index(drop=True)
+
+    keep_indices: list[int] = []
+    for _, group in work.groupby(["asset", "timeframe", "pattern_type"], sort=False):
+        timeframe_delta = _timeframe_to_timedelta(group.iloc[0]["timeframe"])
+        confirm_window = timeframe_delta * max(confirm_within_bars, 0)
+        kept_rows: list[pd.Series] = []
+        for row in (group.iloc[i] for i in range(len(group))):
+            is_duplicate = False
+            for kept in kept_rows:
+                confirm_gap = abs(pd.Timestamp(row["t_confirm_utc"]) - pd.Timestamp(kept["t_confirm_utc"]))
+                if confirm_gap > confirm_window:
+                    continue
+                if _interval_overlap_ratio(row, kept) >= overlap_threshold:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                keep_indices.append(int(row.name))
+                kept_rows.append(row)
+
+    return work.loc[keep_indices].reset_index(drop=True)
 
 
 def _maybe_parse_json_object(value):
@@ -89,12 +155,29 @@ def _detect_patterns(bars: pd.DataFrame, cfg: dict, pivots: pd.DataFrame) -> pd.
             dcfg["symbolic"]["residual_weight"],
             dcfg["symbolic"]["smoothness_weight"],
             dcfg["symbolic"]["channel_threshold"],
+            dcfg["symbolic"].get("max_residual_ratio", 0.45),
+            dcfg["symbolic"].get("min_r2", 0.6),
         ),
     ]
     if dcfg["hs_ieee"]["enabled"]:
         patterns.append(detect_hs_ieee_comparator(bars, dcfg["hs_ieee"]["keypoint_window"], dcfg["hs_ieee"]["min_prominence_atr"]))
     combined = pd.concat([x for x in patterns if not x.empty], ignore_index=True) if any(not x.empty for x in patterns) else pd.DataFrame()
     return _deduplicate_patterns(combined, cfg)
+
+
+def _extract_pivots_for_cfg(bars: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    tcfg = cfg["turning_points"]
+    method = tcfg.get("method", "atr_zigzag")
+    if method == "atr_zigzag":
+        return extract_pivots(bars, tcfg["atr_lambda"], tcfg["min_separation_bars"])
+    if method == "smoothed_extrema":
+        return extract_pivots_smoothed_extrema(
+            bars,
+            smoothing_window=int(tcfg.get("smoothing_window", 5)),
+            prominence_atr=float(tcfg.get("prominence_atr", 0.8)),
+            min_sep=int(tcfg["min_separation_bars"]),
+        )
+    raise ValueError(f"Unsupported turning_points.method: {method}")
 
 
 def _surrogate_bars_from_test(test_bars: pd.DataFrame, surrogate_close: pd.Series) -> pd.DataFrame:
@@ -127,7 +210,7 @@ def _surrogate_rows_for_task(
     s_bars = add_true_range_and_atr(s_bars, cfg["features"]["atr_period"])
     s_bars = add_realized_vol(s_bars, cfg["features"]["rv_window"])
     s_bars = apply_regimes(s_bars, qlo, qhi)
-    s_pivots = extract_pivots(s_bars, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
+    s_pivots = _extract_pivots_for_cfg(s_bars, cfg)
     s_patterns = _detect_patterns(s_bars, cfg, s_pivots)
     if s_patterns.empty:
         return []
@@ -169,7 +252,7 @@ def _run_data_layer(cfg: dict, dirs: dict[str, Path]) -> None:
             bars = add_realized_vol(bars, cfg["features"]["rv_window"])
             write_table(bars, dirs["bars"] / f"{asset}_{tf}.parquet")
 
-            pivots = extract_pivots(bars, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
+            pivots = _extract_pivots_for_cfg(bars, cfg)
             write_table(pivots, dirs["turning_points"] / f"{asset}_{tf}_pivots.parquet")
 
     quality_df = pd.concat(quality_rows, ignore_index=True) if quality_rows else pd.DataFrame()
@@ -184,14 +267,6 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
     surrogate_rows: list[dict] = []
 
     n_surrogates = int(cfg["surrogates"]["n"])
-    rng = np.random.default_rng(cfg["seed"])
-
-    for asset in cfg["assets"]:
-        venue = cfg["venues"][asset]
-        for tf in cfg["timeframes"]:
-            bars = _read_table(dirs["bars"] / f"{asset}_{tf}.parquet")
-            bars["ts_utc"] = pd.to_datetime(bars["ts_utc"], utc=True)
-            pivots = _read_table(dirs["turning_points"] / f"{asset}_{tf}_pivots.parquet")
 
     for asset in cfg["assets"]:
         venue = cfg["venues"][asset]
@@ -206,6 +281,7 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
 
             qlo, qhi = fit_regime_quantiles(train, tuple(cfg["features"]["regime_q"])) if not train.empty else (bars["rv"].quantile(0.33), bars["rv"].quantile(0.66))
             test = apply_regimes(test, qlo, qhi)
+            pivots = _extract_pivots_for_cfg(test, cfg)
             p = _detect_patterns(test, cfg, pivots)
             if p.empty:
                 logger.info("[detect] asset=%s tf=%s patterns=0", asset, tf)
@@ -215,9 +291,15 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
 
             for i, row in p.iterrows():
                 ctx = dict(row["context_labels"] or {})
-                event_label = label_event_window(pd.Timestamp(row["t_confirm_utc"]), events)
+                event_ctx = label_event_context(
+                    pd.Timestamp(row["t_confirm_utc"]),
+                    events,
+                    pre_minutes=int(cfg.get("events", {}).get("pre_minutes", 30)),
+                    post_minutes=int(cfg.get("events", {}).get("post_minutes", 30)),
+                )
                 ctx["session_bucket"] = session_bucket(pd.Timestamp(row["t_confirm_utc"]), venue)
-                ctx["event_window"] = event_label
+                ctx.update(event_ctx)
+                event_label = event_ctx["event_window"]
                 p.at[i, "context_labels"] = ctx
                 macro_rows.append({"pattern_id": row["pattern_id"], "asset": row["asset"], "timeframe": row["timeframe"], "event_window": event_label})
 
@@ -245,34 +327,6 @@ def _run_detection_layer(cfg: dict, dirs: dict[str, Path], max_workers: int = 1,
                     surrogate_rows.extend(_surrogate_rows_for_task(test, cfg, qlo, qhi, null_name, sidx, seed))
                     if i % max(progress_every, 1) == 0 or i == len(jobs):
                         logger.info("[detect] surrogate progress asset=%s tf=%s %s/%s", asset, tf, i, len(jobs))
-            for sidx in range(cfg["surrogates"]["n"]):
-                for null_name in ("perm", "stationary"):
-                    s_close = (
-                        returns_permutation(test["close"], rng)
-                        if null_name == "perm"
-                        else stationary_bootstrap(test["close"], cfg["surrogates"]["stationary_bootstrap_block"], rng)
-                    )
-                    s_bars = _surrogate_bars_from_test(test, s_close)
-                    s_bars = add_log_returns(s_bars)
-                    s_bars = add_true_range_and_atr(s_bars, cfg["features"]["atr_period"])
-                    s_bars = add_realized_vol(s_bars, cfg["features"]["rv_window"])
-                    s_bars = apply_regimes(s_bars, qlo, qhi)
-                    s_pivots = extract_pivots(s_bars, cfg["turning_points"]["atr_lambda"], cfg["turning_points"]["min_separation_bars"])
-                    s_patterns = _detect_patterns(s_bars, cfg, s_pivots)
-                    if s_patterns.empty:
-                        continue
-                    for k, g in s_patterns.groupby(["asset", "timeframe", "pattern_type"]):
-                        surrogate_rows.append(
-                            {
-                                "asset": k[0],
-                                "timeframe": k[1],
-                                "pattern_type": k[2],
-                                "null_model": null_name,
-                                "sim_id": sidx,
-                                "count_density": len(g),
-                                "strength": float(g["score"].median()),
-                            }
-                        )
 
     macro_df = pd.DataFrame(macro_rows)
     write_table(macro_df, dirs["experiments"] / "macro_event_labels.parquet")
@@ -354,8 +408,6 @@ def run_pipeline(
 
     if stage in ("full", "data"):
         _run_data_layer(cfg, dirs)
-    if stage in ("full", "detect"):
-        patterns, surr = _run_detection_layer(cfg, dirs, max_workers=max_workers, progress_every=progress_every)
     if stage in ("full", "detect"):
         patterns, surr = _run_detection_layer(cfg, dirs, max_workers=max_workers, progress_every=progress_every)
     else:

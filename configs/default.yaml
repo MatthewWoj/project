@@ -57,8 +57,11 @@ features:
   regime_q: [0.33, 0.66]
 
 turning_points:
+  method: atr_zigzag
   atr_lambda: 2.0
   min_separation_bars: 3
+  smoothing_window: 5
+  prominence_atr: 0.8
 
 detectors:
   hs:
@@ -85,6 +88,8 @@ detectors:
     smoothness_weight: 0.3
     residual_weight: 0.7
     channel_threshold: 0.75
+    max_residual_ratio: 0.45
+    min_r2: 0.6
 
 quality:
   stale_close_run: 10
@@ -108,6 +113,10 @@ paths:
   output_root: data/outputs
   run_name: default_run
   events_csv: data/events/events.csv
+
+events:
+  pre_minutes: 30
+  post_minutes: 30
 
 runtime:
   max_workers: 1

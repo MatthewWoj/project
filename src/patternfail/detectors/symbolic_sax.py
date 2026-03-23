@@ -16,3 +16,10 @@ def smoothness(word: str) -> float:
     vals = np.array([ord(c) for c in word])
     d = np.diff(vals)
     return float(np.mean(np.abs(d))) if len(d) else 0.0
+
+
+def ascii_differences(word: str) -> list[int]:
+    vals = np.array([ord(c) for c in word], dtype=int)
+    if len(vals) <= 1:
+        return []
+    return np.diff(vals).astype(int).tolist()
