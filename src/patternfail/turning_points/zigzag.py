@@ -34,6 +34,7 @@ def extract_pivots(df: pd.DataFrame, atr_lambda: float = 2.0, min_sep: int = 3) 
                     "pivot_price": ext_p,
                     "local_atr": atr,
                     "swing_magnitude": abs(ext_p - prev),
+                    "pivot_method": "atr_zigzag",
                 })
                 last_pivot_i = ext_i
                 direction = "down"
@@ -52,6 +53,7 @@ def extract_pivots(df: pd.DataFrame, atr_lambda: float = 2.0, min_sep: int = 3) 
                     "pivot_price": ext_p,
                     "local_atr": atr,
                     "swing_magnitude": abs(ext_p - prev),
+                    "pivot_method": "atr_zigzag",
                 })
                 last_pivot_i = ext_i
                 direction = "up"

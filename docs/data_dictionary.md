@@ -9,6 +9,7 @@
 
 ## turning_points
 - `asset`, `timeframe`, `pivot_index`, `ts_utc`, `pivot_type`, `pivot_price`.
+- Optional comparator/debug fields: `local_atr`, `swing_magnitude`, `pivot_method`.
 
 ## patterns / outcomes
 - `pattern_id`, `asset`, `venue_type`, `timeframe`, `pattern_type`, `direction`
@@ -16,6 +17,16 @@
 - `detector_family`, `detector_name`
 - `geometry_params` (JSON), `context_labels` (JSON), `outcome_labels` (JSON)
 - `nested_in_pattern_id` (nullable)
+- `geometry_params` may include dissertation-facing debug payloads such as:
+  - `pivots_used`
+  - `candidate_window_bounds`
+  - `fitted_lines`
+  - `fitted_lines.*.coordinate_system`
+  - `fitted_lines.*.index_mode`
+  - `score_components`
+  - `confirmation_reason`
+  - `detection_status`
+  - `detector_variant`
 
 ## significance/surrogate_stats
 - `asset`, `timeframe`, `pattern_type`, `null_model`, `sim_id`, `count_density`, `strength`.
@@ -25,3 +36,4 @@
 
 ## macro_event_labels
 - `pattern_id`, `asset`, `timeframe`, `event_window`.
+- Event context inside `context_labels` may also carry `event_name`, `event_type`, `event_country`, `event_currency`, `event_distance_min`.
