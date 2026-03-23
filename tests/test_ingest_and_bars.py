@@ -73,3 +73,24 @@ def test_reconstructed_timeframes_exist_for_crypto():
     timeframes = ["3min", "5min", "15min", "1h", "4h", "1d", "1w"]
     out = {tf: aggregate_bars(df, tf, "crypto") for tf in timeframes}
     assert all(not out[tf].empty for tf in timeframes)
+
+
+def test_aggregate_bars_supports_1m_alias():
+    idx = pd.date_range("2025-01-01", periods=5, freq="min", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "asset": "BTCUSDT",
+            "venue_type": "crypto",
+            "ts_utc": idx,
+            "open": [1, 2, 3, 4, 5],
+            "high": [1, 2, 3, 4, 5],
+            "low": [1, 2, 3, 4, 5],
+            "close": [1, 2, 3, 4, 5],
+            "volume": [10, 20, 30, 40, 50],
+        }
+    )
+
+    out = aggregate_bars(df, "1m", "crypto")
+
+    assert len(out) == 5
+    assert set(out["timeframe"]) == {"1m"}

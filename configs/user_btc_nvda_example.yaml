@@ -59,15 +59,18 @@ features:
   regime_q: [0.33, 0.66]
 
 turning_points:
+  method: atr_zigzag
   atr_lambda: 2.0
   min_separation_bars: 3
+  smoothing_window: 5
+  prominence_atr: 0.8
 
 detectors:
   hs: { shoulder_tol: 0.08, trough_tol: 0.10, confirm_beta_atr: 0.2 }
   hs_ieee: { enabled: true, keypoint_window: 180, min_prominence_atr: 0.7 }
   double: { peak_tol: 0.04, min_depth_atr: 1.0, confirm_beta_atr: 0.2 }
   triangle: { window_pivots: 8, convergence_ratio: 0.7, residual_eta_atr: 0.75, confirm_beta_atr: 0.2 }
-  symbolic: { sax_window: 80, paa_segments: 12, alphabet_size: 7, smoothness_weight: 0.3, residual_weight: 0.7, channel_threshold: 0.75 }
+  symbolic: { sax_window: 80, paa_segments: 12, alphabet_size: 7, smoothness_weight: 0.3, residual_weight: 0.7, channel_threshold: 0.75, max_residual_ratio: 0.45, min_r2: 0.6 }
 
 quality:
   stale_close_run: 10
@@ -79,7 +82,7 @@ outcomes:
   default_target_r: 1.5
 
 surrogates:
-  n: 20
+  n: 6
   stationary_bootstrap_block: 30
 
 paths:
@@ -87,9 +90,18 @@ paths:
   run_name: user_btc_nvda
   events_csv: data/events/events.csv
 
+events:
+  pre_minutes: 30
+  post_minutes: 30
+
 runtime:
-  max_workers: 1
-  progress_every: 5
+  max_workers: 8
+  progress_every: 2
+
+dedup:
+  enabled: true
+  overlap_threshold: 0.8
+  confirm_within_bars: 3
 
 experiments:
   base_timeframe: 15min
