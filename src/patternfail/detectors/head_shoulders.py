@@ -68,6 +68,16 @@ def detect_hs_lo(bars: pd.DataFrame, pivots: pd.DataFrame, shoulder_tol: float, 
         tpl = np.array([0.7, 0, 1.0, 0, 0.7]) if top else np.array([-0.7, 0, -1.0, 0, -0.7])
         score = float(np.sqrt(np.mean((vec - tpl) ** 2)))
         mm = abs(x[2] - (x[1] + m * (int(s["pivot_index"].iloc[2]) - t2)))
+        pivots_used = [
+            {
+                "label": f"P{k + 1}",
+                "pivot_type": s["pivot_type"].iloc[k],
+                "pivot_index": int(s["pivot_index"].iloc[k]),
+                "ts_utc": str(s["ts_utc"].iloc[k]),
+                "pivot_price": float(x[k]),
+            }
+            for k in range(5)
+        ]
         out.append(_inst(
             bars.iloc[0],
             "HS_TOP" if top else "HS_INV",
@@ -78,6 +88,13 @@ def detect_hs_lo(bars: pd.DataFrame, pivots: pd.DataFrame, shoulder_tol: float, 
                 "neckline_slope": float(m), "neckline_intercept": float(x[1] - m * t2),
                 "shoulder_similarity": float(shoulder), "trough_similarity": float(trough),
                 "measured_move_height": float(mm),
+                "pivots_used": pivots_used,
+                "candidate_window_bounds": {"start_idx": int(s["pivot_index"].iloc[0]), "end_idx": int(s["pivot_index"].iloc[4])},
+                "fitted_lines": {"neckline": {"slope": float(m), "intercept": float(x[1] - m * t2)}},
+                "score_components": {"template_rmse": float(score), "shoulder_similarity": float(shoulder), "trough_similarity": float(trough)},
+                "confirmation_reason": "neckline_breach_atr_filtered",
+                "detection_status": "CONFIRMED",
+                "detector_variant": "lo_pivot_template",
             },
             "hs_lo",
         ))
@@ -85,31 +102,106 @@ def detect_hs_lo(bars: pd.DataFrame, pivots: pd.DataFrame, shoulder_tol: float, 
 
 
 def detect_hs_ieee_comparator(bars: pd.DataFrame, keypoint_window: int = 180, prominence_atr: float = 0.7) -> pd.DataFrame:
-    # Lightweight key-point sliding-window comparator; same output schema.
+    # Research-prototype comparator inspired by key-point/sliding-window IEEE detector.
     out = []
-    close = bars["close"].to_numpy()
-    atr = bars["atr"].fillna(0).to_numpy()
-    for end in range(keypoint_window, len(bars), max(keypoint_window // 4, 1)):
-        start = end - keypoint_window
-        w = close[start:end]
-        idx = np.arange(len(w))
-        k = np.argpartition(w, -3)[-3:]
-        k = np.sort(k)
-        if len(k) < 3:
-            continue
-        l, h, r = k[0], k[1], k[2]
-        if not (w[h] > w[l] and w[h] > w[r]):
-            continue
-        shoulder_sim = abs(w[l] - w[r]) / max((w[l] + w[r]) / 2, 1e-12)
-        if shoulder_sim > 0.15:
-            continue
-        if (w[h] - max(w[l], w[r])) < prominence_atr * max(float(np.nanmean(atr[start:end])), 1e-12):
-            continue
-        confirm_i = end
-        if confirm_i >= len(bars):
+    close = bars["close"].to_numpy(dtype=float)
+    atr = bars["atr"].fillna(0).to_numpy(dtype=float)
+    keypoints = []
+    for i in range(1, len(bars) - 1):
+        prev_p, cur_p, next_p = close[i - 1], close[i], close[i + 1]
+        if (cur_p >= prev_p and cur_p > next_p) or (cur_p <= prev_p and cur_p < next_p):
+            pivot_type = "HIGH" if cur_p >= prev_p and cur_p > next_p else "LOW"
+            neighborhood = close[max(0, i - 3) : min(len(close), i + 4)]
+            ref = neighborhood.min() if pivot_type == "HIGH" else neighborhood.max()
+            prominence = abs(cur_p - ref)
+            if prominence >= prominence_atr * max(atr[i], 1e-12):
+                keypoints.append({"idx": i, "price": cur_p, "type": pivot_type, "ts_utc": bars.loc[i, "ts_utc"]})
+
+    if len(keypoints) < 5:
+        return pd.DataFrame()
+
+    step = max(keypoint_window // 4, 1)
+    for end in range(keypoint_window, len(bars) + 1, step):
+        start = max(0, end - keypoint_window)
+        window_points = [kp for kp in keypoints if start <= kp["idx"] < end]
+        best = None
+        for i in range(len(window_points) - 4):
+            seq = window_points[i : i + 5]
+            types = tuple(pt["type"] for pt in seq)
+            if types not in [("HIGH", "LOW", "HIGH", "LOW", "HIGH"), ("LOW", "HIGH", "LOW", "HIGH", "LOW")]:
+                continue
+            top = types[0] == "HIGH"
+            prices = np.array([pt["price"] for pt in seq], dtype=float)
+            if top and not (prices[2] > prices[0] and prices[2] > prices[4]):
+                continue
+            if (not top) and not (prices[2] < prices[0] and prices[2] < prices[4]):
+                continue
+            shoulder_sim = abs(prices[0] - prices[4]) / max((abs(prices[0]) + abs(prices[4])) / 2, 1e-12)
+            trough_sim = abs(prices[1] - prices[3]) / max((abs(prices[1]) + abs(prices[3])) / 2, 1e-12)
+            head_prom = abs(prices[2] - np.mean([prices[0], prices[4]])) / max(atr[seq[2]["idx"]], 1e-12)
+            if shoulder_sim > 0.15 or trough_sim > 0.2 or head_prom < prominence_atr:
+                continue
+
+            i2, i4 = seq[1]["idx"], seq[3]["idx"]
+            slope = (prices[3] - prices[1]) / max(i4 - i2, 1)
+            intercept = prices[1] - slope * i2
+            confirm = None
+            for j in range(seq[4]["idx"] + 1, min(end + step, len(bars))):
+                neckline = slope * j + intercept
+                c = close[j]
+                a = atr[j]
+                if (top and c < neckline - 0.1 * a) or ((not top) and c > neckline + 0.1 * a):
+                    confirm = j
+                    break
+            if confirm is None:
+                continue
+
+            fit = float(0.5 * shoulder_sim + 0.3 * trough_sim + 0.2 / max(head_prom, 1e-12))
+            candidate = {
+                "score": fit,
+                "pattern_type": "HS_TOP_IEEE" if top else "HS_INV_IEEE",
+                "direction": "SHORT" if top else "LONG",
+                "t_start_utc": seq[0]["ts_utc"],
+                "t_end_utc": seq[4]["ts_utc"],
+                "t_confirm_utc": bars.loc[confirm, "ts_utc"],
+                "geometry_params": {
+                    "window": keypoint_window,
+                    "pivots_used": [
+                        {
+                            "label": f"P{k + 1}",
+                            "pivot_type": seq[k]["type"],
+                            "pivot_index": int(seq[k]["idx"]),
+                            "ts_utc": str(seq[k]["ts_utc"]),
+                            "pivot_price": float(seq[k]["price"]),
+                        }
+                        for k in range(5)
+                    ],
+                    "candidate_window_bounds": {"start_idx": int(start), "end_idx": int(end - 1)},
+                    "fitted_lines": {"neckline": {"slope": float(slope), "intercept": float(intercept)}},
+                    "score_components": {
+                        "shoulder_similarity": float(shoulder_sim),
+                        "trough_similarity": float(trough_sim),
+                        "head_prominence_atr": float(head_prom),
+                        "fit_score": float(fit),
+                    },
+                    "confirmation_reason": "keypoint_window_neckline_breach",
+                    "detection_status": "CONFIRMED",
+                    "detector_variant": "ieee_keypoint_window",
+                },
+            }
+            if best is None or candidate["score"] < best["score"]:
+                best = candidate
+        if best is None:
             continue
         out.append(_inst(
-            bars.iloc[0], "HS_TOP_IEEE", "SHORT", bars.loc[start + l, "ts_utc"], bars.loc[start + r, "ts_utc"], bars.loc[confirm_i, "ts_utc"],
-            float(shoulder_sim), {"window": keypoint_window, "left": float(w[l]), "head": float(w[h]), "right": float(w[r])}, "hs_ieee"
+            bars.iloc[0],
+            best["pattern_type"],
+            best["direction"],
+            best["t_start_utc"],
+            best["t_end_utc"],
+            best["t_confirm_utc"],
+            best["score"],
+            best["geometry_params"],
+            "hs_ieee",
         ))
     return pd.DataFrame(out)
