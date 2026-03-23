@@ -101,6 +101,7 @@ def detect_hs_lo(bars: pd.DataFrame, pivots: pd.DataFrame, shoulder_tol: float, 
                         "end_ts": str(bars.loc[confirm, "ts_utc"]),
                     }
                 },
+                "fitted_lines": {"neckline": {"slope": float(m), "intercept": float(x[1] - m * t2)}},
                 "score_components": {"template_rmse": float(score), "shoulder_similarity": float(shoulder), "trough_similarity": float(trough)},
                 "confirmation_reason": "neckline_breach_atr_filtered",
                 "detection_status": "CONFIRMED",
@@ -198,6 +199,7 @@ def detect_hs_ieee_comparator(bars: pd.DataFrame, keypoint_window: int = 180, pr
                             "end_ts": str(bars.loc[confirm, "ts_utc"]),
                         }
                     },
+                    "fitted_lines": {"neckline": {"slope": float(slope), "intercept": float(intercept)}},
                     "score_components": {
                         "shoulder_similarity": float(shoulder_sim),
                         "trough_similarity": float(trough_sim),

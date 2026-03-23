@@ -96,6 +96,9 @@ def detect_symbolic_channels(
                         "start_ts": str(bars.loc[start, "ts_utc"]),
                         "end_ts": str(bars.loc[end, "ts_utc"]),
                     },
+                    "center": {"slope": float(slope), "intercept": float(intercept)},
+                    "upper": {"slope": float(slope), "intercept": float(intercept + half_width)},
+                    "lower": {"slope": float(slope), "intercept": float(intercept - half_width)},
                 },
                 "score_components": {
                     "residual_ratio": float(residual_ratio),

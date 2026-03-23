@@ -223,6 +223,32 @@ def plot_detection(run_root: Path, asset: str, timeframe: str, pattern_id: str |
     if geom.get("detection_status") != "STRUCTURAL_ONLY":
         if b["ts_utc"].min() <= pat["t_confirm_utc"] <= b["ts_utc"].max():
             ax.axvline(pat["t_confirm_utc"], color="blue", linestyle=":", label="confirmation")
+    if "neckline_slope" in geom and "neckline_intercept" in geom:
+        x = pd.Series(range(lo, hi + 1))
+        y = geom["neckline_slope"] * x + geom["neckline_intercept"]
+        ax.plot(b["ts_utc"], y, linestyle="--", label="neckline")
+    if "neckline" in fitted:
+        x = pd.Series(range(lo, hi + 1))
+        y = fitted["neckline"]["slope"] * x + fitted["neckline"]["intercept"]
+        ax.plot(b["ts_utc"], y, linestyle="--", label="neckline")
+    if "upper_slope" in geom and "upper_intercept" in geom:
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], geom["upper_slope"] * x + geom["upper_intercept"], linestyle="--", label="upper boundary")
+    if "lower_slope" in geom and "lower_intercept" in geom:
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], geom["lower_slope"] * x + geom["lower_intercept"], linestyle="--", label="lower boundary")
+    if "upper" in fitted:
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], fitted["upper"]["slope"] * x + fitted["upper"]["intercept"], linestyle="--", label="upper boundary")
+    if "lower" in fitted:
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], fitted["lower"]["slope"] * x + fitted["lower"]["intercept"], linestyle="--", label="lower boundary")
+    if "center" in fitted:
+        x = pd.Series(range(lo, hi + 1))
+        ax.plot(b["ts_utc"], fitted["center"]["slope"] * x + fitted["center"]["intercept"], linestyle="-.", label="centerline")
+
+    if geom.get("detection_status") != "STRUCTURAL_ONLY":
+        ax.axvline(pat["t_confirm_utc"], color="blue", linestyle=":", label="confirmation")
     else:
         ax.axvspan(pat["t_start_utc"], pat["t_end_utc"], color="blue", alpha=0.08, label="structure window")
 

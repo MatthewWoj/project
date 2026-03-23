@@ -95,6 +95,8 @@ def detect_triangles(bars: pd.DataFrame, pivots: pd.DataFrame, window_pivots: in
                         "start_ts": str(s["ts_utc"].iloc[0]),
                         "end_ts": str(bars.iloc[confirm]["ts_utc"]),
                     },
+                    "upper": {"kind": "affine", "slope": float(au), "intercept": float(bu), "coordinate_system": "raw_price", "index_mode": "global"},
+                    "lower": {"kind": "affine", "slope": float(al), "intercept": float(bl), "coordinate_system": "raw_price", "index_mode": "global"},
                 },
                 "score_components": {
                     "residual_over_width": float(max(ru, rl) / max(ws, 1e-12)),
