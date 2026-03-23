@@ -51,12 +51,44 @@ def detect_triangles(bars: pd.DataFrame, pivots: pd.DataFrame, window_pivots: in
         if abs(au) < 1e-3 and al > 0: ptype = "TRIANGLE_ASC"
         elif abs(al) < 1e-3 and au < 0: ptype = "TRIANGLE_DESC"
         elif au < 0 and al > 0: ptype = "TRIANGLE_SYM"
+        pivots_used = [
+            {
+                "label": f"P{k + 1}",
+                "pivot_type": s["pivot_type"].iloc[k],
+                "pivot_index": int(s["pivot_index"].iloc[k]),
+                "ts_utc": str(s["ts_utc"].iloc[k]),
+                "pivot_price": float(s["pivot_price"].iloc[k]),
+            }
+            for k in range(len(s))
+        ]
         out.append({
             "pattern_id": str(uuid.uuid4()), "asset": bars["asset"].iloc[0], "venue_type": bars["venue_type"].iloc[0], "timeframe": bars["timeframe"].iloc[0],
             "pattern_type": ptype, "direction": direction,
             "t_start_utc": s["ts_utc"].iloc[0], "t_end_utc": s["ts_utc"].iloc[-1], "t_confirm_utc": bars.iloc[confirm]["ts_utc"],
             "score": float(max(ru, rl) / max(ws, 1e-12) + we / max(ws, 1e-12)),
-            "geometry_params": {"a_u": float(au), "b_u": float(bu), "a_l": float(al), "b_l": float(bl), "width_start": float(ws), "width_end": float(we), "residual": float(max(ru, rl))},
+            "geometry_params": {
+                "a_u": float(au),
+                "b_u": float(bu),
+                "a_l": float(al),
+                "b_l": float(bl),
+                "width_start": float(ws),
+                "width_end": float(we),
+                "residual": float(max(ru, rl)),
+                "pivots_used": pivots_used,
+                "candidate_window_bounds": {"start_idx": ts, "end_idx": te},
+                "fitted_lines": {
+                    "upper": {"kind": "affine", "slope": float(au), "intercept": float(bu), "coordinate_system": "raw_price", "index_mode": "global"},
+                    "lower": {"kind": "affine", "slope": float(al), "intercept": float(bl), "coordinate_system": "raw_price", "index_mode": "global"},
+                },
+                "score_components": {
+                    "residual_over_width": float(max(ru, rl) / max(ws, 1e-12)),
+                    "width_end_ratio": float(we / max(ws, 1e-12)),
+                    "final_score": float(max(ru, rl) / max(ws, 1e-12) + we / max(ws, 1e-12)),
+                },
+                "confirmation_reason": "triangle_boundary_break_atr_filtered",
+                "detection_status": "CONFIRMED",
+                "detector_variant": "pivot_triangle",
+            },
             "detector_family": "geometric", "detector_name": "triangles", "context_labels": {}, "nested_in_pattern_id": None, "outcome_labels": None,
         })
     return pd.DataFrame(out)

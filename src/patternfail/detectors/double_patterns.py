@@ -40,11 +40,42 @@ def detect_double_patterns(bars: pd.DataFrame, pivots: pd.DataFrame, peak_tol: f
                 break
         if confirm is None:
             continue
+        pivots_used = [
+            {
+                "label": f"P{k + 1}",
+                "pivot_type": s["pivot_type"].iloc[k],
+                "pivot_index": int(s["pivot_index"].iloc[k]),
+                "ts_utc": str(s["ts_utc"].iloc[k]),
+                "pivot_price": float(s["pivot_price"].iloc[k]),
+            }
+            for k in range(3)
+        ]
         out.append({
             "pattern_id": str(uuid.uuid4()), "asset": bars["asset"].iloc[0], "venue_type": bars["venue_type"].iloc[0], "timeframe": bars["timeframe"].iloc[0],
             "pattern_type": "DT" if top else "DB", "direction": "SHORT" if top else "LONG",
             "t_start_utc": s["ts_utc"].iloc[0], "t_end_utc": s["ts_utc"].iloc[2], "t_confirm_utc": bars.iloc[confirm]["ts_utc"],
-            "score": float(sim), "geometry_params": {"similarity": float(sim), "depth": float(depth)},
+            "score": float(sim),
+            "geometry_params": {
+                "similarity": float(sim),
+                "depth": float(depth),
+                "pivots_used": pivots_used,
+                "candidate_window_bounds": {"start_idx": int(s["pivot_index"].iloc[0]), "end_idx": int(s["pivot_index"].iloc[2])},
+                "fitted_lines": {
+                    "neckline": {
+                        "kind": "horizontal",
+                        "value": float(x2),
+                        "coordinate_system": "raw_price",
+                    }
+                },
+                "score_components": {
+                    "peak_similarity": float(sim),
+                    "depth_atr_scaled": float(depth / max(atr, 1e-12)),
+                    "final_score": float(sim),
+                },
+                "confirmation_reason": "neckline_breach_atr_filtered",
+                "detection_status": "CONFIRMED",
+                "detector_variant": "pivot_double_pattern",
+            },
             "detector_family": "geometric", "detector_name": "double_patterns", "context_labels": {}, "nested_in_pattern_id": None, "outcome_labels": None,
         })
     return pd.DataFrame(out)

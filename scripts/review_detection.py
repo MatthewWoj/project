@@ -6,6 +6,7 @@ from pathlib import Path
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 
@@ -90,12 +91,18 @@ def plot_detection(run_root: Path, asset: str, timeframe: str, pattern_id: str |
     b = bars.iloc[lo : hi + 1].copy()
 
     fig, ax = plt.subplots(figsize=(13, 6))
+    if len(b) >= 2:
+        delta = np.median(np.diff(mdates.date2num(b["ts_utc"].dt.to_pydatetime())))
+        candle_width = max(delta * 0.65, 0.0008)
+    else:
+        candle_width = 0.02
     for _, r in b.iterrows():
         t = mdates.date2num(r["ts_utc"].to_pydatetime())
         color = "green" if r["close"] >= r["open"] else "red"
         ax.plot([t, t], [r["low"], r["high"]], color=color, linewidth=1)
         body_low = min(r["open"], r["close"])
-        ax.add_patch(plt.Rectangle((t - 0.0008, body_low), 0.0016, abs(r["close"] - r["open"]) + 1e-8, color=color, alpha=0.7))
+        body_height = max(abs(r["close"] - r["open"]), max((b["high"] - b["low"]).median() * 0.03, 1e-8))
+        ax.add_patch(plt.Rectangle((t - candle_width / 2, body_low), candle_width, body_height, color=color, alpha=0.7))
 
     geom = _to_dict(pat.get("geometry_params"))
     fitted = geom.get("fitted_lines", {})
