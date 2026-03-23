@@ -39,6 +39,7 @@ Edit only:
 - `input_csv.BTCUSDT`
 - `input_csv.NVDA`
 - `paths.run_name` (optional custom output folder name)
+- On Windows, use forward slashes in YAML paths (for example `C:/Users/Mateo/data/BTCUSDT.csv`) or wrap backslash paths in single quotes.
 
 ### Why this config works for your exact files
 
