@@ -24,6 +24,8 @@ def ingest_asset_csv(asset: str, venue_type: str, csv_path: str, csv_cfg: dict) 
     sep = override.get("separator", csv_cfg.get("separator", ","))
 
     df = pd.read_csv(csv_path, sep=sep)
+
+    df = pd.read_csv(csv_path)
     rename = {
         ts_col: "ts_utc",
         c["open"]: "open",
