@@ -34,28 +34,11 @@ Start from:
 cp configs/user_btc_nvda_example.yaml configs/my_run.yaml
 ```
 
-On Windows PowerShell:
-
-```powershell
-Copy-Item configs/user_btc_nvda_example.yaml configs/my_run.yaml
-notepad configs/my_run.yaml
-```
-
 Edit only:
 
 - `input_csv.BTCUSDT`
 - `input_csv.NVDA`
 - `paths.run_name` (optional custom output folder name)
-
-Replace the example placeholder paths with the real locations of your files. For example:
-
-```yaml
-input_csv:
-  BTCUSDT: C:/Users/Mateo/Desktop/ccc/data/BTCUSDT_1m_2022_2025.csv
-  NVDA: C:/Users/Mateo/Desktop/ccc/data/NVDA_1min_2022_2025.csv
-```
-
-Forward slashes are fine on Windows and are usually easier to edit in YAML than backslashes.
 
 ### Why this config works for your exact files
 
@@ -125,7 +108,6 @@ You can also select a specific `--pattern-id`.
 
 ## Troubleshooting
 
-- If you see `/REPLACE/WITH/YOUR/PATH/...` in an error, the config still contains the example placeholder path. Open `configs/my_run.yaml`, update `input_csv.BTCUSDT` / `input_csv.NVDA`, save, and rerun.
 - If files are comma-separated (not tab-separated), set `csv.asset_overrides.BTCUSDT.separator: ","`.
 - If NVDA dates are interpreted incorrectly, keep `day_first: true` for NVDA.
 - If parquet dependencies are unavailable, outputs will be written as CSV automatically.

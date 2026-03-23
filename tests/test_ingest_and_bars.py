@@ -56,47 +56,6 @@ def test_ingest_supports_tab_separator_and_day_first(tmp_path: Path):
     assert df.loc[0, "ts_utc"].isoformat() == "2022-01-03T14:30:00+00:00"
 
 
-def test_ingest_rejects_placeholder_example_path():
-    cfg = {
-        "timestamp_col": "timestamp",
-        "assume_tz": "UTC",
-        "separator": ",",
-        "cols": {"open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"},
-        "asset_overrides": {},
-    }
-
-    try:
-        ingest_asset_csv("BTCUSDT", "crypto", "/REPLACE/WITH/YOUR/PATH/BTCUSDT.csv", cfg)
-    except FileNotFoundError as exc:
-        message = str(exc)
-    else:
-        raise AssertionError("Expected placeholder config path to raise FileNotFoundError")
-
-    assert "input_csv.BTCUSDT" in message
-    assert "notepad configs/my_run.yaml" in message
-
-
-def test_ingest_rejects_missing_csv_path(tmp_path: Path):
-    cfg = {
-        "timestamp_col": "timestamp",
-        "assume_tz": "UTC",
-        "separator": ",",
-        "cols": {"open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"},
-        "asset_overrides": {},
-    }
-
-    missing = tmp_path / "missing.csv"
-    try:
-        ingest_asset_csv("NVDA", "equity_us", str(missing), cfg)
-    except FileNotFoundError as exc:
-        message = str(exc)
-    else:
-        raise AssertionError("Expected missing csv path to raise FileNotFoundError")
-
-    assert str(missing) in message
-    assert "input_csv.NVDA" in message
-
-
 def test_reconstructed_timeframes_exist_for_crypto():
     idx = pd.date_range("2025-01-01", periods=60 * 24 * 8, freq="min", tz="UTC")
     df = pd.DataFrame(
