@@ -82,11 +82,6 @@ surrogates:
   n: 20
   stationary_bootstrap_block: 30
 
-dedup:
-  enabled: true
-  overlap_threshold: 0.8
-  confirm_within_bars: 3
-
 paths:
   output_root: data/outputs
   run_name: user_btc_nvda
