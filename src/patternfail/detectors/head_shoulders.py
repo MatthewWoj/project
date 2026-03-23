@@ -90,7 +90,15 @@ def detect_hs_lo(bars: pd.DataFrame, pivots: pd.DataFrame, shoulder_tol: float, 
                 "measured_move_height": float(mm),
                 "pivots_used": pivots_used,
                 "candidate_window_bounds": {"start_idx": int(s["pivot_index"].iloc[0]), "end_idx": int(s["pivot_index"].iloc[4])},
-                "fitted_lines": {"neckline": {"slope": float(m), "intercept": float(x[1] - m * t2)}},
+                "fitted_lines": {
+                    "neckline": {
+                        "kind": "affine",
+                        "slope": float(m),
+                        "intercept": float(x[1] - m * t2),
+                        "coordinate_system": "raw_price",
+                        "index_mode": "global",
+                    }
+                },
                 "score_components": {"template_rmse": float(score), "shoulder_similarity": float(shoulder), "trough_similarity": float(trough)},
                 "confirmation_reason": "neckline_breach_atr_filtered",
                 "detection_status": "CONFIRMED",
@@ -177,7 +185,15 @@ def detect_hs_ieee_comparator(bars: pd.DataFrame, keypoint_window: int = 180, pr
                         for k in range(5)
                     ],
                     "candidate_window_bounds": {"start_idx": int(start), "end_idx": int(end - 1)},
-                    "fitted_lines": {"neckline": {"slope": float(slope), "intercept": float(intercept)}},
+                    "fitted_lines": {
+                        "neckline": {
+                            "kind": "affine",
+                            "slope": float(slope),
+                            "intercept": float(intercept),
+                            "coordinate_system": "raw_price",
+                            "index_mode": "global",
+                        }
+                    },
                     "score_components": {
                         "shoulder_similarity": float(shoulder_sim),
                         "trough_similarity": float(trough_sim),

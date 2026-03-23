@@ -69,9 +69,27 @@ def detect_symbolic_channels(
                     "end_ts": str(bars.loc[end, "ts_utc"]),
                 },
                 "fitted_lines": {
-                    "center": {"slope": float(slope), "intercept": float(intercept)},
-                    "upper": {"slope": float(slope), "intercept": float(intercept + half_width)},
-                    "lower": {"slope": float(slope), "intercept": float(intercept - half_width)},
+                    "center": {
+                        "kind": "affine",
+                        "slope": float(slope),
+                        "intercept": float(intercept),
+                        "coordinate_system": "log_price",
+                        "index_mode": "local_from_start",
+                    },
+                    "upper": {
+                        "kind": "affine",
+                        "slope": float(slope),
+                        "intercept": float(intercept + half_width),
+                        "coordinate_system": "log_price",
+                        "index_mode": "local_from_start",
+                    },
+                    "lower": {
+                        "kind": "affine",
+                        "slope": float(slope),
+                        "intercept": float(intercept - half_width),
+                        "coordinate_system": "log_price",
+                        "index_mode": "local_from_start",
+                    },
                 },
                 "score_components": {
                     "residual_ratio": float(residual_ratio),

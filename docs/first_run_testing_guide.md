@@ -142,3 +142,4 @@ You can also select a specific `--pattern-id`.
 - The review script reads either parquet or CSV outputs automatically and now uses richer debug payloads stored in `geometry_params`.
 - Geometric detections should show pivot markers (`P1`, `P2`, ...) and fitted lines such as necklines or triangle boundaries.
 - Channel detections are treated as structural windows by default, so the review artifact highlights the detected structure instead of drawing a visually misleading fake confirmation line.
+- Fitted lines are now plotted in the correct coordinate space (for example channel lines are converted back from log-price space before being overlaid on raw-price candles).

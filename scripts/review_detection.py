@@ -6,6 +6,7 @@ from pathlib import Path
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 
@@ -42,6 +43,41 @@ def _plot_pivots(ax, pivots_used):
             color=color,
             fontsize=8,
         )
+
+
+def _visible_index_series(bars: pd.DataFrame) -> np.ndarray:
+    return bars.index.to_numpy(dtype=float)
+
+
+def _line_values(line: dict, bars: pd.DataFrame, geom: dict) -> np.ndarray | None:
+    if not line:
+        return None
+    indices = _visible_index_series(bars)
+    start_idx = int(geom.get("candidate_window_bounds", {}).get("start_idx", int(indices[0]) if len(indices) else 0))
+    if line.get("kind") == "horizontal":
+        values = np.full(len(indices), float(line["value"]))
+    else:
+        if line.get("index_mode") == "local_from_start":
+            x = indices - start_idx
+        else:
+            x = indices
+        values = float(line["slope"]) * x + float(line["intercept"])
+    if line.get("coordinate_system") == "log_price":
+        values = np.exp(values)
+    return values
+
+
+def _plot_line(ax, bars: pd.DataFrame, geom: dict, line: dict, label: str, style: str) -> bool:
+    values = _line_values(line, bars, geom)
+    if values is None:
+        return False
+    price_low = float(bars["low"].min())
+    price_high = float(bars["high"].max())
+    span = max(price_high - price_low, 1e-9)
+    if np.nanmin(values) < price_low - 5 * span or np.nanmax(values) > price_high + 5 * span:
+        return False
+    ax.plot(bars["ts_utc"], values, style, label=label, linewidth=1.6)
+    return True
 
 
 def _add_annotation(ax, geom: dict, pat: pd.Series):
@@ -90,41 +126,60 @@ def plot_detection(run_root: Path, asset: str, timeframe: str, pattern_id: str |
     b = bars.iloc[lo : hi + 1].copy()
 
     fig, ax = plt.subplots(figsize=(13, 6))
+    if len(b) >= 2:
+        delta = np.median(np.diff(mdates.date2num(b["ts_utc"].dt.to_pydatetime())))
+        candle_width = max(delta * 0.65, 0.0008)
+    else:
+        candle_width = 0.02
     for _, r in b.iterrows():
         t = mdates.date2num(r["ts_utc"].to_pydatetime())
         color = "green" if r["close"] >= r["open"] else "red"
         ax.plot([t, t], [r["low"], r["high"]], color=color, linewidth=1)
         body_low = min(r["open"], r["close"])
-        ax.add_patch(plt.Rectangle((t - 0.0008, body_low), 0.0016, abs(r["close"] - r["open"]) + 1e-8, color=color, alpha=0.7))
+        body_height = max(abs(r["close"] - r["open"]), max((b["high"] - b["low"]).median() * 0.03, 1e-8))
+        ax.add_patch(plt.Rectangle((t - candle_width / 2, body_low), candle_width, body_height, color=color, alpha=0.7))
 
     geom = _to_dict(pat.get("geometry_params"))
     fitted = geom.get("fitted_lines", {})
-    if "neckline_slope" in geom and "neckline_intercept" in geom:
-        x = pd.Series(range(lo, hi + 1))
-        y = geom["neckline_slope"] * x + geom["neckline_intercept"]
-        ax.plot(b["ts_utc"], y, linestyle="--", label="neckline")
     if "neckline" in fitted:
-        x = pd.Series(range(lo, hi + 1))
-        y = fitted["neckline"]["slope"] * x + fitted["neckline"]["intercept"]
-        ax.plot(b["ts_utc"], y, linestyle="--", label="neckline")
-    if "upper_slope" in geom and "upper_intercept" in geom:
-        x = pd.Series(range(lo, hi + 1))
-        ax.plot(b["ts_utc"], geom["upper_slope"] * x + geom["upper_intercept"], linestyle="--", label="upper boundary")
-    if "lower_slope" in geom and "lower_intercept" in geom:
-        x = pd.Series(range(lo, hi + 1))
-        ax.plot(b["ts_utc"], geom["lower_slope"] * x + geom["lower_intercept"], linestyle="--", label="lower boundary")
+        _plot_line(ax, b, geom, fitted["neckline"], "neckline", "--")
+    elif "neckline_slope" in geom and "neckline_intercept" in geom:
+        legacy = {
+            "kind": "affine",
+            "slope": geom["neckline_slope"],
+            "intercept": geom["neckline_intercept"],
+            "coordinate_system": "raw_price",
+            "index_mode": "global",
+        }
+        _plot_line(ax, b, geom, legacy, "neckline", "--")
     if "upper" in fitted:
-        x = pd.Series(range(lo, hi + 1))
-        ax.plot(b["ts_utc"], fitted["upper"]["slope"] * x + fitted["upper"]["intercept"], linestyle="--", label="upper boundary")
+        _plot_line(ax, b, geom, fitted["upper"], "upper boundary", "--")
+    elif "upper_slope" in geom and "upper_intercept" in geom:
+        legacy = {
+            "kind": "affine",
+            "slope": geom["upper_slope"],
+            "intercept": geom["upper_intercept"],
+            "coordinate_system": "raw_price",
+            "index_mode": "global",
+        }
+        _plot_line(ax, b, geom, legacy, "upper boundary", "--")
     if "lower" in fitted:
-        x = pd.Series(range(lo, hi + 1))
-        ax.plot(b["ts_utc"], fitted["lower"]["slope"] * x + fitted["lower"]["intercept"], linestyle="--", label="lower boundary")
+        _plot_line(ax, b, geom, fitted["lower"], "lower boundary", "--")
+    elif "lower_slope" in geom and "lower_intercept" in geom:
+        legacy = {
+            "kind": "affine",
+            "slope": geom["lower_slope"],
+            "intercept": geom["lower_intercept"],
+            "coordinate_system": "raw_price",
+            "index_mode": "global",
+        }
+        _plot_line(ax, b, geom, legacy, "lower boundary", "--")
     if "center" in fitted:
-        x = pd.Series(range(lo, hi + 1))
-        ax.plot(b["ts_utc"], fitted["center"]["slope"] * x + fitted["center"]["intercept"], linestyle="-.", label="centerline")
+        _plot_line(ax, b, geom, fitted["center"], "centerline", "-.")
 
     if geom.get("detection_status") != "STRUCTURAL_ONLY":
-        ax.axvline(pat["t_confirm_utc"], color="blue", linestyle=":", label="confirmation")
+        if b["ts_utc"].min() <= pat["t_confirm_utc"] <= b["ts_utc"].max():
+            ax.axvline(pat["t_confirm_utc"], color="blue", linestyle=":", label="confirmation")
     else:
         ax.axvspan(pat["t_start_utc"], pat["t_end_utc"], color="blue", alpha=0.08, label="structure window")
 

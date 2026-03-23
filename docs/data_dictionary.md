@@ -21,6 +21,8 @@
   - `pivots_used`
   - `candidate_window_bounds`
   - `fitted_lines`
+  - `fitted_lines.*.coordinate_system`
+  - `fitted_lines.*.index_mode`
   - `score_components`
   - `confirmation_reason`
   - `detection_status`
